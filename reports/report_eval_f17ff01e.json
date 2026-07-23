@@ -1,0 +1,225 @@
+{
+  "run_id": "eval_f17ff01e",
+  "timestamp": "2026-06-10T13:30:45.554737",
+  "extraction": {
+    "accuracy": 100.0,
+    "completeness": 100.0,
+    "confidence_score": 93.85,
+    "citation_coverage": 38.46,
+    "missing_field_detection": 100.0,
+    "field_details": {
+      "Function": {
+        "field_name": "Function",
+        "expected_value": "Database Migration",
+        "extracted_value": "Database Migration",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Exact match."
+      },
+      "Business Objective": {
+        "field_name": "Business Objective",
+        "expected_value": "Migrate legacy database to AWS Aurora to cut licensing costs by 40%",
+        "extracted_value": "Migrate Acme's legacy database to AWS Aurora to reduce licensing costs by 40%",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Numeric equivalent match."
+      },
+      "Outcomes": {
+        "field_name": "Outcomes",
+        "expected_value": "Reduced licensing costs by 45% and database response times by 30%",
+        "extracted_value": "Cut licensing costs by 45% and database query latency by 30%",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Numeric equivalent match."
+      },
+      "Buyer Role": {
+        "field_name": "Buyer Role",
+        "expected_value": "Chief Information Officer",
+        "extracted_value": "CIO",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Mock reason"
+      },
+      "Revenue/Billing": {
+        "field_name": "Revenue/Billing",
+        "expected_value": "$250,000",
+        "extracted_value": "$250,000",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Exact match."
+      },
+      "Solution": {
+        "field_name": "Solution",
+        "expected_value": "Custom ETL pipelines in Python, AWS Glue, AWS Aurora PostgreSQL",
+        "extracted_value": "Python ETL scripts, AWS Glue, AWS Aurora PostgreSQL",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Mock reason"
+      },
+      "Differentiators": {
+        "field_name": "Differentiators",
+        "expected_value": "Pre-built migration accelerators and AWS DMS competence",
+        "extracted_value": "Migration accelerators and AWS competence",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Mock reason"
+      },
+      "Technology": {
+        "field_name": "Technology",
+        "expected_value": "AWS Aurora, AWS Glue, Python, AWS DMS",
+        "extracted_value": "AWS Aurora, AWS Glue, Python",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Mock reason"
+      },
+      "Lead Source": {
+        "field_name": "Lead Source",
+        "expected_value": "Inbound contact form",
+        "extracted_value": "Inbound Form",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Mock reason"
+      },
+      "Start Year": {
+        "field_name": "Start Year",
+        "expected_value": "2024",
+        "extracted_value": "2024",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Exact match."
+      },
+      "Team": {
+        "field_name": "Team",
+        "expected_value": "3 Cloud Engineers, 1 Database Administrator",
+        "extracted_value": "3 Cloud Engineers and 1 DBA",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Numeric equivalent match."
+      },
+      "Client": {
+        "field_name": "Client",
+        "expected_value": "Acme Corp",
+        "extracted_value": "Acme Corp",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Exact match."
+      },
+      "Project Name": {
+        "field_name": "Project Name",
+        "expected_value": "Project Apex",
+        "extracted_value": "Project Apex",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Exact match."
+      }
+    }
+  },
+  "retrieval": {
+    "precision_at_k": 0.6,
+    "recall_at_k": 1.0,
+    "mrr": 1.0,
+    "ndcg": 0.9469,
+    "relevance_score": 0.69
+  },
+  "rag": {
+    "context_precision": 0.62,
+    "context_recall": 0.66,
+    "faithfulness": 0.94,
+    "answer_relevancy": 0.59,
+    "groundedness": 0.14
+  },
+  "hallucination": {
+    "supported_claims": 3,
+    "total_claims": 4,
+    "hallucination_rate": 25.0,
+    "claims": [
+      {
+        "claim": "The project was executed for Microsoft in 2024.",
+        "is_supported": true,
+        "evidence": "Reference mentions contract with Microsoft in Q2 2024.",
+        "reasoning": "Exact match found."
+      },
+      {
+        "claim": "The solution utilized Python, Qdrant, and Azure OpenAI.",
+        "is_supported": true,
+        "evidence": "Tech stack includes Python, Qdrant vector database, and Azure OpenAI endpoint.",
+        "reasoning": "Exact match found."
+      },
+      {
+        "claim": "The project reduced response latency by 85%.",
+        "is_supported": true,
+        "evidence": "Performance improvements section highlights latency reduction from 1200ms to 180ms (85% speedup).",
+        "reasoning": "Exact match found."
+      },
+      {
+        "claim": "The project generated $5M in annual recurring revenue.",
+        "is_supported": false,
+        "evidence": "None",
+        "reasoning": "The reference mentions project billing was $500,000, not $5M ARR. This is a hallucinated claim."
+      }
+    ]
+  },
+  "sales_brief": {
+    "readability": 8.1,
+    "professionalism": 8.9,
+    "evidence_usage": 9.0,
+    "completeness": 9.5,
+    "persuasiveness": 9.5,
+    "business_value": 8.2,
+    "overall": 8.87,
+    "feedback": "Excellent sales brief. The tone is highly professional, and it clearly articulates the business value and ROI. Incorporating a few more metrics about the technology performance would make the pitch even stronger."
+  },
+  "judge": {
+    "accuracy": 9.0,
+    "completeness": 9.3,
+    "relevance": 9.2,
+    "groundedness": 9.2,
+    "usefulness": 9.6,
+    "overall": 9.26,
+    "reasoning": "The system output is highly accurate, matching the reference facts precisely. All required details about the tech stack are present and correctly formatted, and the language is clear and useful."
+  },
+  "performance": {
+    "latency_ms": 9761.7,
+    "cost_usd": 0.0015,
+    "prompt_tokens": 4500,
+    "completion_tokens": 1200,
+    "total_tokens": 5700,
+    "throughput_tokens_per_sec": 583.91
+  },
+  "overall_score": 79.77,
+  "weights_used": {
+    "extraction_accuracy": 0.2,
+    "retrieval_quality": 0.25,
+    "rag_quality": 0.2,
+    "sales_brief_quality": 0.15,
+    "hallucination_detection": 0.1,
+    "cost_efficiency": 0.05,
+    "latency": 0.05
+  }
+}

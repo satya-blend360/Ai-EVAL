@@ -1,0 +1,237 @@
+{
+  "run_id": "eval_d15c25c3",
+  "timestamp": "2026-06-10T14:58:34.671639",
+  "extraction": {
+    "accuracy": 76.92,
+    "completeness": 100.0,
+    "confidence_score": 93.85,
+    "citation_coverage": 38.46,
+    "missing_field_detection": 100.0,
+    "field_details": {
+      "Technology": {
+        "field_name": "Technology",
+        "expected_value": "AWS Aurora, AWS Glue, Python, AWS DMS",
+        "extracted_value": "AWS Aurora, AWS Glue, Python",
+        "is_correct": false,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "The extracted value is missing 'AWS DMS', which is critical information that is present in the expected ground truth."
+      },
+      "Lead Source": {
+        "field_name": "Lead Source",
+        "expected_value": "Inbound contact form",
+        "extracted_value": "Inbound Form",
+        "is_correct": false,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "The extracted value 'Inbound Form' does not specify 'contact' which is a critical part of the expected ground truth 'Inbound contact form'. Therefore, it is not semantically equivalent."
+      },
+      "Outcomes": {
+        "field_name": "Outcomes",
+        "expected_value": "Reduced licensing costs by 45% and database response times by 30%",
+        "extracted_value": "Cut licensing costs by 45% and database query latency by 30%",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Numeric equivalent match."
+      },
+      "Buyer Role": {
+        "field_name": "Buyer Role",
+        "expected_value": "Chief Information Officer",
+        "extracted_value": "CIO",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "CIO is a commonly used abbreviation for Chief Information Officer, thus conveying the same role."
+      },
+      "Start Year": {
+        "field_name": "Start Year",
+        "expected_value": "2024",
+        "extracted_value": "2024",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Exact match."
+      },
+      "Solution": {
+        "field_name": "Solution",
+        "expected_value": "Custom ETL pipelines in Python, AWS Glue, AWS Aurora PostgreSQL",
+        "extracted_value": "Python ETL scripts, AWS Glue, AWS Aurora PostgreSQL",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "The extracted value conveys the same information as the expected ground truth, as it includes all the critical components: 'ETL' is implied in 'Python ETL scripts', and both mention 'AWS Glue' and 'AWS Aurora PostgreSQL'."
+      },
+      "Revenue/Billing": {
+        "field_name": "Revenue/Billing",
+        "expected_value": "$250,000",
+        "extracted_value": "$250,000",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Exact match."
+      },
+      "Client": {
+        "field_name": "Client",
+        "expected_value": "Acme Corp",
+        "extracted_value": "Acme Corp",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Exact match."
+      },
+      "Differentiators": {
+        "field_name": "Differentiators",
+        "expected_value": "Pre-built migration accelerators and AWS DMS competence",
+        "extracted_value": "Migration accelerators and AWS competence",
+        "is_correct": false,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "The extracted value omits 'pre-built' and 'DMS', which are critical components of the expected ground truth. 'AWS competence' is also less specific than 'AWS DMS competence', leading to a loss of important information."
+      },
+      "Function": {
+        "field_name": "Function",
+        "expected_value": "Database Migration",
+        "extracted_value": "Database Migration",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Exact match."
+      },
+      "Project Name": {
+        "field_name": "Project Name",
+        "expected_value": "Project Apex",
+        "extracted_value": "Project Apex",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": true,
+        "citation_valid": true,
+        "comments": "Exact match."
+      },
+      "Business Objective": {
+        "field_name": "Business Objective",
+        "expected_value": "Migrate legacy database to AWS Aurora to cut licensing costs by 40%",
+        "extracted_value": "Migrate Acme's legacy database to AWS Aurora to reduce licensing costs by 40%",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Numeric equivalent match."
+      },
+      "Team": {
+        "field_name": "Team",
+        "expected_value": "3 Cloud Engineers, 1 Database Administrator",
+        "extracted_value": "3 Cloud Engineers and 1 DBA",
+        "is_correct": true,
+        "is_missing": false,
+        "citation_provided": false,
+        "citation_valid": false,
+        "comments": "Numeric equivalent match."
+      }
+    }
+  },
+  "retrieval": {
+    "precision_at_k": 0.6,
+    "recall_at_k": 1.0,
+    "mrr": 1.0,
+    "ndcg": 0.9469,
+    "relevance_score": 0.8
+  },
+  "rag": {
+    "context_precision": 1.0,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 1.0,
+    "groundedness": 1.0
+  },
+  "hallucination": {
+    "supported_claims": 5,
+    "total_claims": 6,
+    "hallucination_rate": 16.67,
+    "claims": [
+      {
+        "claim": "Project Horizon migrated Globex's e-commerce website to AWS using EKS, RDS PostgreSQL, and React.",
+        "is_supported": true,
+        "evidence": "Evidence [0]",
+        "reasoning": "The claim matches the details provided in Evidence [0] regarding the migration to AWS and the tech stack used."
+      },
+      {
+        "claim": "The system achieved a 50% improvement in checkout speeds.",
+        "is_supported": true,
+        "evidence": "Evidence [1]",
+        "reasoning": "The claim is supported by Evidence [1], which states a 50% increase in checkout throughput."
+      },
+      {
+        "claim": "The system withstood Black Friday with zero downtime.",
+        "is_supported": true,
+        "evidence": "Evidence [1]",
+        "reasoning": "Evidence [1] confirms that there was zero downtime during Black Friday 2024."
+      },
+      {
+        "claim": "The total budget of the project was $180,000.",
+        "is_supported": true,
+        "evidence": "Evidence [2]",
+        "reasoning": "This claim is directly supported by Evidence [2], which states the project budget."
+      },
+      {
+        "claim": "The project was completed in 4 months by our core DevOps squad.",
+        "is_supported": true,
+        "evidence": "Evidence [2]",
+        "reasoning": "Evidence [2] provides the completion time and the team involved."
+      },
+      {
+        "claim": "The project was successfully integrated with OpenAI's GPT-4 for product recommendations.",
+        "is_supported": false,
+        "evidence": "None",
+        "reasoning": "There is no evidence provided that supports the integration with OpenAI's GPT-4."
+      }
+    ]
+  },
+  "sales_brief": {
+    "readability": 9.0,
+    "professionalism": 9.0,
+    "evidence_usage": 9.0,
+    "completeness": 8.0,
+    "persuasiveness": 8.0,
+    "business_value": 9.0,
+    "overall": 8.67,
+    "feedback": "The sales brief is well-structured and easy to read, with clear headings and a logical flow. The professional tone is maintained throughout, and there are no typos. The use of project facts and metrics is strong, particularly with the emphasis on quantitative ROI. However, the completeness could be improved by explicitly stating the client profile and the specific business objectives in the executive summary. The call to action is clear and compelling, but adding a sense of urgency could enhance persuasiveness."
+  },
+  "judge": {
+    "accuracy": 10.0,
+    "completeness": 10.0,
+    "relevance": 10.0,
+    "groundedness": 10.0,
+    "usefulness": 10.0,
+    "overall": 10.0,
+    "reasoning": "The AI model's output accurately reflects the technical stack of Project Apex, including the correct technologies used (Python, AWS Glue, AWS Aurora PostgreSQL) and the team composition (three Cloud Engineers and one Database Administrator). There are no inaccuracies or missing elements, and the response is directly relevant to the user's request. The information is clearly presented and actionable, making it highly useful."
+  },
+  "performance": {
+    "latency_ms": 70241.71,
+    "cost_usd": 0.0001,
+    "prompt_tokens": 500,
+    "completion_tokens": 150,
+    "total_tokens": 650,
+    "throughput_tokens_per_sec": 9.25
+  },
+  "overall_score": 83.89,
+  "weights_used": {
+    "extraction_accuracy": 0.2,
+    "retrieval_quality": 0.25,
+    "rag_quality": 0.2,
+    "sales_brief_quality": 0.15,
+    "hallucination_detection": 0.1,
+    "cost_efficiency": 0.05,
+    "latency": 0.05
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "extraction_cases": [
+    {
+      "case_id": "ext_case_001",
+      "source_text": "Project Apex was successfully deployed for Acme Corp by our Cloud Systems team in 2024. The buyer was Jane Doe, Chief Information Officer (CIO). The lead source was an inbound contact form. The primary business objective was to migrate Acme's legacy on-prem database to AWS Aurora PostgreSQL to reduce operational licensing costs by 40%. The solution involved writing custom ETL pipelines using Python and setting up AWS Glue and AWS Aurora. The team consisted of 3 Cloud Engineers and 1 Database Administrator. The project succeeded in reducing licensing costs by 45% and database response times by 30%. Key differentiators included our pre-built migration accelerators and AWS Database Migration Service competence. The project was billed on a time and materials basis, with total revenue of $250,000.",
+      "expected_fields": {
+        "Project Name": "Project Apex",
+        "Client": "Acme Corp",
+        "Buyer Role": "Chief Information Officer",
+        "Function": "Database Migration",
+        "Lead Source": "Inbound contact form",
+        "Business Objective": "Migrate legacy database to AWS Aurora to cut licensing costs by 40%",
+        "Outcomes": "Reduced licensing costs by 45% and database response times by 30%",
+        "Solution": "Custom ETL pipelines in Python, AWS Glue, AWS Aurora PostgreSQL",
+        "Technology": "AWS Aurora, AWS Glue, Python, AWS DMS",
+        "Team": "3 Cloud Engineers, 1 Database Administrator",
+        "Differentiators": "Pre-built migration accelerators and AWS DMS competence",
+        "Revenue/Billing": "$250,000",
+        "Start Year": "2024"
+      },
+      "extracted_fields": {
+        "Project Name": "Project Apex",
+        "Client": "Acme Corp",
+        "Buyer Role": "CIO",
+        "Function": "Database Migration",
+        "Lead Source": "Inbound Form",
+        "Business Objective": "Migrate Acme's legacy database to AWS Aurora to reduce licensing costs by 40%",
+        "Outcomes": "Cut licensing costs by 45% and database query latency by 30%",
+        "Solution": "Python ETL scripts, AWS Glue, AWS Aurora PostgreSQL",
+        "Technology": "AWS Aurora, AWS Glue, Python",
+        "Team": "3 Cloud Engineers and 1 DBA",
+        "Differentiators": "Migration accelerators and AWS competence",
+        "Revenue/Billing": "$250,000",
+        "Start Year": "2024"
+      },
+      "field_citations": {
+        "Project Name": "Project Apex",
+        "Client": "Acme Corp by",
+        "Buyer Role": "Chief Information Officer (CIO)",
+        "Start Year": "in 2024",
+        "Revenue/Billing": "total revenue of $250,000"
+      },
+      "confidence_scores": {
+        "Project Name": 0.99,
+        "Client": 0.98,
+        "Buyer Role": 0.95,
+        "Function": 0.92,
+        "Lead Source": 0.88,
+        "Business Objective": 0.94,
+        "Outcomes": 0.91,
+        "Solution": 0.93,
+        "Technology": 0.95,
+        "Team": 0.90,
+        "Differentiators": 0.89,
+        "Revenue/Billing": 0.97,
+        "Start Year": 0.99
+      }
+    }
+  ],
+  "retrieval_cases": [
+    {
+      "case_id": "ret_case_001",
+      "query": "AWS database migration projects with revenue over $200k",
+      "expected_projects": ["Project Apex", "Project Horizon", "Project Titan"],
+      "retrieved_projects": ["Project Apex", "Project Titan", "Project Nebula", "Project Genesis", "Project Horizon"],
+      "project_details": {
+        "Project Apex": "AWS Aurora database migration for Acme Corp. $250,000 revenue. Solved licensing costs.",
+        "Project Horizon": "Cloud migration and database re-platforming to AWS RDS for Globex. Billed $310k.",
+        "Project Titan": "Oracle to PostgreSQL AWS migration for Initech. $400,000 contract value.",
+        "Project Nebula": "Salesforce integration and CRM cleanup for Umbrella Corp. $150k cost.",
+        "Project Genesis": "Kubernetes migration and Dockerization for Hooli. $350k budget."
+      }
+    }
+  ],
+  "rag_cases": [
+    {
+      "case_id": "rag_case_001",
+      "query": "What were the outcomes and total revenue of Project Apex?",
+      "contexts": [
+        "Project Apex was completed for Acme Corp in 2024. The project successfully migrated database systems to AWS Aurora PostgreSQL, lowering licensing costs by 45% and latency by 30%.",
+        "The project billing was executed under a T&M structure, resulting in a total revenue of $250,000. It was led by a team of 4 specialists (3 Cloud Engineers and 1 Database Administrator)."
+      ],
+      "generated_answer": "Project Apex achieved significant outcomes, including a 45% reduction in database licensing costs and a 30% reduction in query latency. The total revenue generated from the project was $250,000 under a time and materials billing structure.",
+      "ground_truth_answer": "The outcomes of Project Apex were a 45% reduction in licensing costs and a 30% reduction in database response latency. The total revenue for the project was $250,000."
+    }
+  ],
+  "hallucination_cases": [
+    {
+      "case_id": "hal_case_001",
+      "evidence_texts": [
+        "Project Horizon migrated Globex's e-commerce platform to AWS. Tech stack: AWS EKS, RDS PostgreSQL, React, and Terraform.",
+        "Globex reported a 50% increase in checkout throughput and zero downtime during Black Friday 2024.",
+        "Project budget was $180,000, completed in 4 months by our core DevOps squad."
+      ],
+      "generated_answer": "Project Horizon migrated Globex's e-commerce website to AWS using EKS, RDS PostgreSQL, and React. The system achieved a 50% improvement in checkout speeds and withstood Black Friday with zero downtime. The total budget of the project was $180,000, and it was successfully integrated with OpenAI's GPT-4 for product recommendations."
+    }
+  ],
+  "sales_brief_cases": [
+    {
+      "case_id": "sales_case_001",
+      "project_context": {
+        "Project Name": "Project Apex",
+        "Client": "Acme Corp",
+        "Buyer Role": "CIO",
+        "Function": "Database Migration",
+        "Business Objective": "Reduce database licensing costs by 40% and improve scale.",
+        "Outcomes": "45% reduction in licensing costs and 30% speedup in queries.",
+        "Solution": "AWS Aurora PostgreSQL, AWS Glue ETL",
+        "Technology": "AWS, PostgreSQL, Python",
+        "Revenue/Billing": "$250,000"
+      },
+      "business_requirements": "The sales brief must target a tech executive buyer, highlight quantitative ROI in bold, and include a clear call-to-action recommending our migration starter pack.",
+      "sales_brief": "# Sales Brief: Cloud Database Modernization\n\n**Target Buyer:** CIO / VP of Infrastructure\n**Reference Customer:** Acme Corp\n\n## Executive Summary\nWe recently partnered with **Acme Corp** to modernize their legacy database environment, addressing rising license overheads and latency bottlenecks. By migrating to a fully managed cloud architecture, we delivered an immediate **45% reduction in licensing costs** and a **30% improvement in search performance**.\n\n## The Challenge\nAcme Corp was constrained by rising proprietary database licensing costs. Performance limits caused database query bottlenecks during peak periods, harming user experience.\n\n## Our Modernization Solution\nWe designed and implemented a seamless migration path to **AWS Aurora PostgreSQL** using **AWS Glue ETL** automation. \n\n## Documented Value & ROI\n* **Financial Impact:** Slashed database licensing costs by **45%** (target was 40%).\n* **Performance Gains:** Improved query speeds by **30%**.\n* **Modern Infrastructure:** High availability setup with multi-AZ failover.\n* **Contract Value:** Delivered on a $250,000 time-and-materials engagement.\n\n## Call to Action\nReady to replicate these savings? Contact our Database Modernization Practice to schedule a free 2-hour assessment and learn how our **Migration Starter Pack** can accelerate your cloud transition."
+    }
+  ],
+  "judge_cases": [
+    {
+      "case_id": "judge_case_001",
+      "input_context": "Explain the technical stack and team size of Project Apex.",
+      "reference_ground_truth": "Project Apex utilized AWS Aurora PostgreSQL, AWS Glue, Python, and AWS Database Migration Service (DMS). The team consisted of 3 Cloud Engineers and 1 Database Administrator (4 members total).",
+      "output_generated": "Project Apex was built using Python for custom ETL pipelines, AWS Glue, and AWS Aurora PostgreSQL. The deployment team comprised four specialists: three Cloud Engineers and one Database Administrator."
+    }
+  ]
+}
