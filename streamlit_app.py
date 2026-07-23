@@ -12,8 +12,9 @@ from typing import List, Dict, Any
 
 # Setup pathing
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+APP_ROOT = os.path.abspath(os.path.dirname(__file__))
+sys.path.append(os.path.join(APP_ROOT, 'src'))
+sys.path.append(APP_ROOT)
 
 from ai_eval.core.evaluator import AIEvaluator
 from ai_eval.data.loader import load_evaluation_data
