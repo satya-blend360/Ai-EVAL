@@ -166,6 +166,7 @@ def safe_identifier(value: str, default: str) -> str:
 DB_CATALOG = safe_identifier(DB_CATALOG, "sandbox")
 DB_SCHEMA = safe_identifier(DB_SCHEMA, "ai_eval_judge_portal")
 DB_PREFIX = f"{DB_CATALOG}.{DB_SCHEMA}"
+JUDGE_READY_QUESTIONS_PATH = Path(APP_ROOT) / "judge_ready_evaluation_questions.md"
 
 
 def is_company_email(email: str) -> bool:
@@ -216,6 +217,172 @@ def run_db_query(query: str, parameters: Optional[Dict[str, Any]] = None, fetch:
             return pd.DataFrame(rows, columns=columns)
 
 
+def normalize_text(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+@st.cache_data
+def load_correct_answer_key() -> List[Dict[str, Any]]:
+    if not JUDGE_READY_QUESTIONS_PATH.exists():
+        return []
+    content = JUDGE_READY_QUESTIONS_PATH.read_text(encoding="utf-8")
+    blocks = re.split(r"(?m)^## Question\s+(\d+)\s*$", content)
+    questions = []
+    for index in range(1, len(blocks), 2):
+        question_number = int(blocks[index])
+        body = blocks[index + 1]
+        item = {"question_number": question_number}
+        for field in ["question", "answer", "question_type", "match_keywords"]:
+            match = re.search(
+                rf"(?ms)^{field}:\s*\n(.*?)(?=\n(?:file_name|question|answer|answer_source|question_type|match_keywords):|\n## Question|\Z)",
+                body,
+            )
+            item[field] = match.group(1).strip() if match else ""
+
+        source_match = re.search(
+            r"(?ms)^answer_source:\s*\n(.*?)(?=\n(?:file_name|question|answer|answer_source|question_type|match_keywords):|\n## Question|\Z)",
+            body,
+        )
+        sources = []
+        if source_match:
+            sources = [
+                line[2:].strip()
+                for line in source_match.group(1).splitlines()
+                if line.strip().startswith("- ")
+            ]
+        item["answer_source"] = sources
+        item["match_keywords_list"] = [
+            keyword.strip()
+            for keyword in item.get("match_keywords", "").split(";")
+            if keyword.strip()
+        ]
+        questions.append(item)
+    return questions
+
+
+def correct_answer_key_json() -> str:
+    return json.dumps(load_correct_answer_key(), ensure_ascii=False)
+
+
+def find_nested_answer_container(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        for key in ["answers", "responses", "results", "questions", "items", "data"]:
+            if isinstance(payload.get(key), list):
+                return payload[key]
+        return payload
+    return payload
+
+
+def extract_submitted_answers(submission_json: str) -> Dict[int, str]:
+    if not submission_json:
+        return {}
+    try:
+        payload = json.loads(submission_json)
+    except Exception:
+        return {}
+    payload = find_nested_answer_container(payload)
+    answers: Dict[int, str] = {}
+
+    if isinstance(payload, list):
+        for position, item in enumerate(payload, start=1):
+            if isinstance(item, dict):
+                raw_id = (
+                    item.get("question_number")
+                    or item.get("question_id")
+                    or item.get("id")
+                    or item.get("number")
+                    or item.get("q")
+                    or position
+                )
+                answer = (
+                    item.get("answer")
+                    or item.get("submitted_answer")
+                    or item.get("response")
+                    or item.get("output")
+                    or item.get("value")
+                    or ""
+                )
+            else:
+                raw_id = position
+                answer = item
+            question_number = parse_question_number(raw_id, position)
+            answers[question_number] = str(answer)
+        return answers
+
+    if isinstance(payload, dict):
+        for position, (key, value) in enumerate(payload.items(), start=1):
+            question_number = parse_question_number(key, position)
+            if isinstance(value, dict):
+                answer = (
+                    value.get("answer")
+                    or value.get("submitted_answer")
+                    or value.get("response")
+                    or value.get("output")
+                    or value.get("value")
+                    or ""
+                )
+            else:
+                answer = value
+            answers[question_number] = str(answer)
+    return answers
+
+
+def parse_question_number(raw_id: Any, fallback: int) -> int:
+    if isinstance(raw_id, (int, float)):
+        return int(raw_id)
+    match = re.search(r"\d+", str(raw_id or ""))
+    return int(match.group(0)) if match else fallback
+
+
+def score_submission_against_key(submission_json: str) -> Dict[str, Any]:
+    key = load_correct_answer_key()
+    submitted_answers = extract_submitted_answers(submission_json)
+    details = []
+    if not key:
+        return {
+            "score": None,
+            "summary": "No correct answer key is available.",
+            "details": details,
+            "correct_answers": key,
+        }
+
+    for expected in key:
+        question_number = expected["question_number"]
+        submitted_answer = submitted_answers.get(question_number, "")
+        submitted_text = normalize_text(submitted_answer)
+        keywords = expected.get("match_keywords_list", [])
+        matched_keywords = [
+            keyword for keyword in keywords if normalize_text(keyword) and normalize_text(keyword) in submitted_text
+        ]
+        keyword_score = len(matched_keywords) / len(keywords) if keywords else 0.0
+        expected_answer_text = normalize_text(expected.get("answer"))
+        exactish_score = 1.0 if expected_answer_text and expected_answer_text in submitted_text else 0.0
+        score = max(keyword_score, exactish_score)
+        details.append(
+            {
+                "question_number": question_number,
+                "question": expected.get("question", ""),
+                "submitted_answer": submitted_answer,
+                "correct_answer": expected.get("answer", ""),
+                "matched_keywords": matched_keywords,
+                "missing_keywords": [keyword for keyword in keywords if keyword not in matched_keywords],
+                "score": round(score * 100, 2),
+                "answer_source": expected.get("answer_source", []),
+            }
+        )
+
+    answered = sum(1 for detail in details if detail["submitted_answer"].strip())
+    score = round(sum(detail["score"] for detail in details) / len(details), 2) if details else None
+    summary = f"Matched {answered}/{len(details)} questions. Automatic keyword score: {score:.1f}/100."
+    return {
+        "score": score,
+        "summary": summary,
+        "details": details,
+        "correct_answers": key,
+    }
+
+
 def local_submissions() -> pd.DataFrame:
     scores = st.session_state.setdefault("local_judge_scores", {})
     rows = [
@@ -228,6 +395,9 @@ def local_submissions() -> pd.DataFrame:
             "video_url": "",
             "description": "Seed submission from the existing Project Apex evaluation data.",
             "submission_json": "",
+            "correct_answers_json": correct_answer_key_json(),
+            "correctness_score": None,
+            "correctness_summary": "No submitted answers for this seed row.",
             "screenshots_json": "[]",
             "ai_score": 88.6,
             "ai_summary": "AI evaluation found strong RAG faithfulness and business value with room to improve citation coverage.",
@@ -244,6 +414,9 @@ def local_submissions() -> pd.DataFrame:
             "video_url": "",
             "description": "Seed submission focused on hallucination auditing for Project Horizon.",
             "submission_json": "",
+            "correct_answers_json": correct_answer_key_json(),
+            "correctness_score": None,
+            "correctness_summary": "No submitted answers for this seed row.",
             "screenshots_json": "[]",
             "ai_score": 82.0,
             "ai_summary": "AI evaluation flagged one unsupported claim around GPT-4 integration and otherwise strong evidence grounding.",
@@ -256,6 +429,9 @@ def local_submissions() -> pd.DataFrame:
     ai_results = st.session_state.setdefault("local_ai_results", {})
     for row in rows:
         row.setdefault("submission_json", "")
+        row.setdefault("correct_answers_json", correct_answer_key_json())
+        row.setdefault("correctness_score", None)
+        row.setdefault("correctness_summary", "Automatic correctness score has not been calculated.")
         row.setdefault("screenshots_json", "[]")
         row.setdefault("ai_score", None)
         row.setdefault("ai_summary", "AI evaluation has not been run yet.")
@@ -286,6 +462,9 @@ def load_submissions() -> pd.DataFrame:
             s.video_url,
             s.description,
             s.submission_json,
+            s.correct_answers_json,
+            s.correctness_score,
+            s.correctness_summary,
             s.screenshots_json,
             s.ai_score,
             s.ai_summary,
@@ -476,6 +655,7 @@ def save_judge_score(submission_id: str, judge_email: str, values: Dict[str, Any
 
 
 def create_submission(values: Dict[str, Any]) -> None:
+    correctness = score_submission_against_key(values.get("submission_json", ""))
     submission = {
         "submission_id": f"sub_{uuid.uuid4().hex[:12]}",
         "project_name": values["project_name"],
@@ -485,6 +665,9 @@ def create_submission(values: Dict[str, Any]) -> None:
         "video_url": values["video_url"],
         "description": values["description"],
         "submission_json": values.get("submission_json", ""),
+        "correct_answers_json": correct_answer_key_json(),
+        "correctness_score": correctness["score"],
+        "correctness_summary": correctness["summary"],
         "screenshots_json": values.get("screenshots_json", "[]"),
     }
     if not db_configured():
@@ -502,6 +685,9 @@ def create_submission(values: Dict[str, Any]) -> None:
             video_url,
             description,
             submission_json,
+            correct_answers_json,
+            correctness_score,
+            correctness_summary,
             screenshots_json,
             ai_score,
             ai_summary,
@@ -517,6 +703,9 @@ def create_submission(values: Dict[str, Any]) -> None:
             :video_url,
             :description,
             :submission_json,
+            :correct_answers_json,
+            :correctness_score,
+            :correctness_summary,
             :screenshots_json,
             NULL,
             'AI evaluation has not been run yet.',
@@ -607,6 +796,46 @@ def render_submission_json(submission_json: str) -> None:
         st.code(submission_json, language="json")
 
 
+def render_correctness_assessment(submission_json: str, stored_summary: str = "", stored_score: Any = None) -> None:
+    assessment = score_submission_against_key(submission_json)
+    score = stored_score
+    if score is None or pd.isna(score):
+        score = assessment.get("score")
+    summary = stored_summary or assessment.get("summary", "")
+    st.metric("Automatic Correctness Score", "N/A" if score is None else f"{float(score):.1f}/100")
+    if summary:
+        st.info(summary)
+
+    details = assessment.get("details", [])
+    if not details:
+        st.caption("No answer comparison is available.")
+        return
+
+    answer_rows = []
+    for detail in details:
+        answer_rows.append(
+            {
+                "Q#": detail["question_number"],
+                "Question": detail["question"],
+                "Submitted Answer": detail["submitted_answer"],
+                "Correct Answer": detail["correct_answer"],
+                "Score": detail["score"],
+                "Matched Keywords": ", ".join(detail["matched_keywords"]),
+                "Missing Keywords": ", ".join(detail["missing_keywords"]),
+            }
+        )
+    st.dataframe(pd.DataFrame(answer_rows), use_container_width=True, hide_index=True)
+
+    with st.expander("Correct answer key and sources", expanded=False):
+        for detail in details:
+            st.markdown(f"**Question {detail['question_number']}**")
+            st.write(detail["question"])
+            st.success(detail["correct_answer"])
+            sources = detail.get("answer_source") or []
+            if sources:
+                st.caption("Sources: " + " | ".join(sources))
+
+
 def render_screenshots(screenshots_json: str) -> None:
     screenshots = decode_screenshots(screenshots_json)
     if not screenshots:
@@ -635,10 +864,13 @@ def render_public_submission() -> None:
     with st.form("public_submission_form"):
         c1, c2 = st.columns(2)
         with c1:
-            project_name = st.text_input("Project name")
+            project_name = st.text_input(
+                "Team name",
+                help="Use the exact team name shared by the organizers.",
+            )
             submitter_name = st.text_input("Your name")
             submitter_email = st.text_input("Your email")
-            submission_url = st.text_input("Prototype or app URL")
+            submission_url = st.text_input("Prototype or app URL (optional)")
         with c2:
             video_url = st.text_input("Video URL", placeholder="OneDrive, YouTube, Loom, or direct video URL")
             screenshots = st.file_uploader(
@@ -660,7 +892,7 @@ def render_public_submission() -> None:
 
     errors = []
     if not project_name.strip():
-        errors.append("Project name is required.")
+        errors.append("Team name is required. Use the exact team name shared by the organizers.")
     if not submitter_name.strip():
         errors.append("Your name is required.")
     if submitter_email.strip() and not is_email(submitter_email):
@@ -761,6 +993,7 @@ def render_judge_portal(judge_email: str) -> None:
     if st.sidebar.button("Refresh data", use_container_width=True):
         load_submissions.clear()
         st.rerun()
+    show_ai_scores = st.sidebar.toggle("Show AI scores", value=False)
 
     if not db_configured():
         st.warning("Databricks secrets are not configured. Changes are kept only in this Streamlit session.")
@@ -797,16 +1030,19 @@ def render_judge_portal(judge_email: str) -> None:
         with st.form("new_submission_form"):
             c1, c2 = st.columns(2)
             with c1:
-                project_name = st.text_input("Project name")
+                project_name = st.text_input(
+                    "Team name",
+                    help="Use the exact team name shared by the organizers.",
+                )
                 submitter_name = st.text_input("Submitter name")
                 submitter_email = st.text_input("Submitter email")
             with c2:
-                submission_url = st.text_input("Prototype or submission URL")
+                submission_url = st.text_input("Prototype or submission URL (optional)")
                 video_url = st.text_input("Video URL")
                 description = st.text_area("Short description", height=120)
             if st.form_submit_button("Save submission", use_container_width=True):
                 if not project_name.strip():
-                    st.error("Project name is required.")
+                    st.error("Team name is required. Use the exact team name shared by the organizers.")
                 else:
                     try:
                         create_submission(
@@ -894,7 +1130,10 @@ def render_judge_portal(judge_email: str) -> None:
                     if description:
                         st.write(description[:240] + ("..." if len(description) > 240 else ""))
                 with top_cols[1]:
-                    st.metric("AI Score", "N/A" if pd.isna(ai_value) else f"{float(ai_value):.1f}")
+                    st.metric(
+                        "AI Score",
+                        "Hidden" if not show_ai_scores else "N/A" if pd.isna(ai_value) else f"{float(ai_value):.1f}",
+                    )
                 with top_cols[2]:
                     st.metric("Judge Avg", "N/A" if pd.isna(avg_judge) else f"{float(avg_judge):.1f}")
                 with top_cols[3]:
@@ -916,13 +1155,23 @@ def render_judge_portal(judge_email: str) -> None:
         st.markdown('<div class="section-header">Submitted JSON</div>', unsafe_allow_html=True)
         render_submission_json(selected.get("submission_json") or "")
 
+        st.markdown('<div class="section-header">Correct Answer Comparison</div>', unsafe_allow_html=True)
+        render_correctness_assessment(
+            selected.get("submission_json") or "",
+            selected.get("correctness_summary") or "",
+            selected.get("correctness_score"),
+        )
+
         st.markdown('<div class="section-header">Screenshots</div>', unsafe_allow_html=True)
         render_screenshots(selected.get("screenshots_json") or "")
 
-        st.markdown('<div class="section-header">AI Evaluation</div>', unsafe_allow_html=True)
-        ai_score = selected.get("ai_score")
-        st.metric("AI Score", "N/A" if pd.isna(ai_score) else f"{float(ai_score):.1f}/100")
-        st.info(selected.get("ai_summary") or "AI evaluation has not been run yet.")
+        if show_ai_scores:
+            st.markdown('<div class="section-header">AI Evaluation</div>', unsafe_allow_html=True)
+            ai_score = selected.get("ai_score")
+            st.metric("AI Score", "N/A" if pd.isna(ai_score) else f"{float(ai_score):.1f}/100")
+            st.info(selected.get("ai_summary") or "AI evaluation has not been run yet.")
+        else:
+            st.caption("AI score is hidden. Use the sidebar toggle to show it.")
 
         if st.button("Run AI evaluation for this project", use_container_width=True):
             with st.spinner("Running AI evaluation..."):
