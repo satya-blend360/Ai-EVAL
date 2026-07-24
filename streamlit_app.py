@@ -338,6 +338,71 @@ def databricks_warehouse_id() -> str:
     return match.group(1) if match else ""
 
 
+def warehouse_http_path_from_id(warehouse_id: str) -> str:
+    return f"/sql/1.0/warehouses/{warehouse_id.strip()}" if warehouse_id.strip() else ""
+
+
+def backup_databricks_warehouse_id() -> str:
+    return (
+        get_secret("DATABRICKS_BACKUP_WAREHOUSE_ID").strip()
+        or get_secret("DATABRICKS_FALLBACK_WAREHOUSE_ID").strip()
+    )
+
+
+def backup_databricks_http_path() -> str:
+    configured_path = (
+        get_secret("DATABRICKS_BACKUP_HTTP_PATH").strip()
+        or get_secret("DATABRICKS_FALLBACK_HTTP_PATH").strip()
+    )
+    if configured_path:
+        return configured_path
+    return warehouse_http_path_from_id(backup_databricks_warehouse_id())
+
+
+def databricks_warehouse_targets() -> List[Dict[str, str]]:
+    backup_path = backup_databricks_http_path()
+    backup_id = backup_databricks_warehouse_id()
+    if backup_path and not backup_id:
+        match = re.search(r"/warehouses/([^/?#]+)", backup_path)
+        backup_id = match.group(1) if match else ""
+
+    targets = [
+        {
+            "role": "Primary",
+            "name": "Starter Warehouse",
+            "warehouse_id": databricks_warehouse_id(),
+            "http_path": get_secret("DATABRICKS_HTTP_PATH").strip(),
+        }
+    ]
+    if backup_path and backup_path != targets[0]["http_path"]:
+        targets.append(
+            {
+                "role": "Backup",
+                "name": "forPIH_Hackathon",
+                "warehouse_id": backup_id,
+                "http_path": backup_path,
+            }
+        )
+    return [target for target in targets if target["http_path"] and target["warehouse_id"]]
+
+
+def databricks_query_warehouse_targets() -> List[Dict[str, str]]:
+    targets = databricks_warehouse_targets()
+    if len(targets) < 2:
+        return targets
+
+    primary = targets[0]
+    try:
+        primary_status = load_warehouse_status(primary["warehouse_id"])
+        primary_state = str(primary_status.get("state", "")).upper()
+    except Exception:
+        return targets
+
+    if primary_state == "RUNNING":
+        return targets
+    return targets[1:] + [primary]
+
+
 def warehouse_api_configured() -> bool:
     return all(
         [
@@ -380,15 +445,15 @@ def run_databricks_api(
 
 
 @st.cache_data(ttl=20)
-def load_warehouse_status() -> Dict[str, Any]:
-    warehouse_id = databricks_warehouse_id()
+def load_warehouse_status(warehouse_id: str = "") -> Dict[str, Any]:
+    warehouse_id = warehouse_id or databricks_warehouse_id()
     if not warehouse_id:
         raise RuntimeError("No Databricks warehouse id was found.")
     return run_databricks_api(f"/api/2.0/sql/warehouses/{warehouse_id}")
 
 
-def start_warehouse() -> None:
-    warehouse_id = databricks_warehouse_id()
+def start_warehouse(warehouse_id: str = "") -> None:
+    warehouse_id = warehouse_id or databricks_warehouse_id()
     if not warehouse_id:
         raise RuntimeError("No Databricks warehouse id was found.")
     run_databricks_api(f"/api/2.0/sql/warehouses/{warehouse_id}/start", method="POST", payload={})
@@ -403,29 +468,34 @@ def render_starter_warehouse_sidebar() -> None:
         st.sidebar.caption("Warehouse status unavailable. Configure `DATABRICKS_WAREHOUSE_ID` or a warehouse `DATABRICKS_HTTP_PATH`.")
         return
 
-    try:
-        warehouse = load_warehouse_status()
-        state = str(warehouse.get("state", "UNKNOWN")).upper()
-        name = warehouse.get("name") or "Starter Warehouse"
-        active = state == "RUNNING"
-        status_icon = "🟢" if active else "🟡" if state in {"STARTING", "RESIZING"} else "🔴"
+    for target in databricks_query_warehouse_targets():
+        try:
+            warehouse = load_warehouse_status(target["warehouse_id"])
+            state = str(warehouse.get("state", "UNKNOWN")).upper()
+            name = warehouse.get("name") or target["name"]
+            active = state == "RUNNING"
+            status_icon = "🟢" if active else "🟡" if state in {"STARTING", "RESIZING"} else "🔴"
 
-        st.sidebar.markdown(f"**{name}:** {status_icon} {state.title()}")
-        if not active:
-            starting = state in {"STARTING", "RESIZING"}
-            if st.sidebar.button(
-                "Start Starter Warehouse",
-                use_container_width=True,
-                disabled=starting,
-            ):
-                try:
-                    start_warehouse()
-                    st.sidebar.success("Start requested.")
-                    st.rerun()
-                except Exception as exc:
-                    st.sidebar.error(f"Could not start warehouse: {exc}")
-    except Exception as exc:
-        st.sidebar.error(f"Could not load warehouse status: {exc}")
+            st.sidebar.markdown(f"**{target['role']} - {name}:** {status_icon} {state.title()}")
+            if not active and target["role"] == "Primary":
+                starting = state in {"STARTING", "RESIZING"}
+                if st.sidebar.button(
+                    "Start Starter Warehouse",
+                    use_container_width=True,
+                    disabled=starting,
+                ):
+                    try:
+                        start_warehouse(target["warehouse_id"])
+                        st.sidebar.success("Start requested.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.sidebar.error(f"Could not start warehouse: {exc}")
+        except Exception as exc:
+            st.sidebar.error(f"Could not load {target['role'].lower()} warehouse status: {exc}")
+
+    active_target = st.session_state.get("active_warehouse_role")
+    if active_target:
+        st.sidebar.caption(f"Last DB connection used: {active_target}")
 
 def run_db_query(query: str, parameters: Optional[Dict[str, Any]] = None, fetch: bool = False):
     if not db_configured():
@@ -435,18 +505,29 @@ def run_db_query(query: str, parameters: Optional[Dict[str, Any]] = None, fetch:
     except ImportError as exc:
         raise RuntimeError("databricks-sql-connector is not installed.") from exc
 
-    with sql.connect(
-        server_hostname=get_secret("DATABRICKS_SERVER_HOSTNAME"),
-        http_path=get_secret("DATABRICKS_HTTP_PATH"),
-        access_token=get_secret("DATABRICKS_TOKEN"),
-    ) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(query, parameters=parameters or {})
-            if not fetch:
-                return None
-            rows = cursor.fetchall()
-            columns = [column[0] for column in cursor.description]
-            return pd.DataFrame(rows, columns=columns)
+    errors = []
+    for target in databricks_warehouse_targets():
+        try:
+            with sql.connect(
+                server_hostname=get_secret("DATABRICKS_SERVER_HOSTNAME"),
+                http_path=target["http_path"],
+                access_token=get_secret("DATABRICKS_TOKEN"),
+            ) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(query, parameters=parameters or {})
+                    st.session_state["active_warehouse_role"] = (
+                        f"{target['role']} - {target['name']}"
+                    )
+                    if not fetch:
+                        return None
+                    rows = cursor.fetchall()
+                    columns = [column[0] for column in cursor.description]
+                    return pd.DataFrame(rows, columns=columns)
+        except Exception as exc:
+            errors.append(f"{target['role']} {target['name']}: {exc}")
+            continue
+
+    raise RuntimeError("All configured Databricks warehouses failed. " + " | ".join(errors))
 
 
 def normalize_text(value: Any) -> str:
