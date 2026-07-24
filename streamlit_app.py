@@ -140,112 +140,6 @@ st.markdown("""
         color: #fde68a;
     }
 
-    /* Floating PIH hackathon scoring guide for judges */
-    .rubric-floating {
-        position: fixed;
-        right: 24px;
-        bottom: 24px;
-        z-index: 100000;
-        width: auto;
-        max-width: min(760px, calc(100vw - 24px));
-        color: #e2e8f0;
-        font-family: 'Inter', sans-serif;
-    }
-    .rubric-floating summary {
-        position: sticky;
-        top: 0;
-        z-index: 1;
-        cursor: pointer;
-        list-style: none;
-        background: #0f172a;
-        border: 1px solid rgba(20, 184, 166, 0.55);
-        border-radius: 999px;
-        padding: 12px 18px;
-        color: #ccfbf1;
-        font-weight: 800;
-        box-shadow: 0 12px 28px rgba(2, 6, 23, 0.35);
-        text-align: center;
-    }
-    .rubric-floating summary::-webkit-details-marker {
-        display: none;
-    }
-    .rubric-floating summary::after {
-        content: "Open";
-        margin-left: 8px;
-        color: #94a3b8;
-        font-weight: 700;
-    }
-    .rubric-floating[open] {
-        width: min(760px, calc(100vw - 24px));
-        max-height: 86vh;
-        overflow: auto;
-        background: rgba(15, 23, 42, 0.98);
-        border: 1px solid rgba(20, 184, 166, 0.55);
-        border-radius: 12px;
-        padding: 16px;
-        box-shadow: 0 24px 60px rgba(2, 6, 23, 0.5);
-    }
-    .rubric-floating[open] summary {
-        display: block;
-        margin: 0 0 14px;
-        box-shadow: none;
-        background: #134e4a;
-        color: #f0fdfa;
-    }
-    .rubric-floating[open] summary::after {
-        content: "Click to close";
-        color: #ccfbf1;
-    }
-    .rubric-floating h3 {
-        color: #f8fafc;
-        margin: 4px 0 10px;
-        font-size: 1.15rem;
-    }
-    .rubric-floating p,
-    .rubric-floating li {
-        font-size: 0.92rem;
-        line-height: 1.45;
-        margin: 6px 0;
-    }
-    .rubric-intro {
-        background: rgba(30, 41, 59, 0.78);
-        border: 1px solid rgba(148, 163, 184, 0.25);
-        border-radius: 8px;
-        padding: 12px;
-        margin-bottom: 12px;
-    }
-    .rubric-scale {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 8px;
-        margin: 10px 0 14px;
-    }
-    .rubric-scale div,
-    .rubric-criterion {
-        background: rgba(30, 41, 59, 0.72);
-        border: 1px solid rgba(148, 163, 184, 0.22);
-        border-radius: 8px;
-        padding: 10px;
-    }
-    .rubric-criterion {
-        margin-bottom: 10px;
-    }
-    .rubric-criterion h4 {
-        margin: 0 0 8px;
-        color: #f8fafc;
-        font-size: 0.96rem;
-    }
-    .rubric-criterion p {
-        margin: 4px 0;
-    }
-    .rubric-floating strong {
-        color: #99f6e4;
-    }
-    .rubric-reminder {
-        border-left: 4px solid #14b8a6;
-        padding-left: 10px;
-        margin-top: 12px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -561,44 +455,10 @@ def pih_total_score(values: Dict[str, Any]) -> float:
 
 
 def render_hackathon_scoring_guide() -> None:
-    criteria_items = "".join(
-        f"""
-        <div class="rubric-criterion">
-            <h4>{field['display']}</h4>
-            <p>{field['help']}</p>
-        </div>
-        """
-        for field in PIH_SCORE_FIELDS
-    )
-    source_note = (
-        "Source: pih_hackathon_design_qa_extracted.md"
-        if PIH_HACKATHON_DOC_PATH.exists()
-        else "Source: PIH Hackathon Design & Q&A document"
-    )
-    st.markdown(
-        f"""
-<details class="rubric-floating">
-    <summary>Scoring Guide</summary>
-    <h3>PIH Hackathon Scorecard</h3>
-    <div class="rubric-intro">
-        <p><strong>Total:</strong> 20 points. Score each criterion from 1 to 4, then sum all five criteria.</p>
-        <div class="rubric-scale">
-            <div><strong>1</strong><br>Underachieving</div>
-            <div><strong>2</strong><br>Average</div>
-            <div><strong>3</strong><br>Proficient</div>
-            <div><strong>4</strong><br>Exceptional</div>
-        </div>
-    </div>
-    {criteria_items}
-    <div class="rubric-reminder">
-        <p><strong>Video evidence to look for:</strong> grounded answers with source visible, quick accuracy tally, and a flag-guide-capture-persist loop for unanswered questions.</p>
-        <p><strong>Submission artifacts:</strong> demo video, test-set answers with sources where relevant, and one generated project one-pager / sales brief.</p>
-        <p>{source_note}</p>
-    </div>
-</details>
-        """,
-        unsafe_allow_html=True,
-    )
+    if st.sidebar.button("Open scoring guide", use_container_width=True):
+        st.session_state["show_scorecard_dialog"] = True
+    if st.session_state.get("show_scorecard_dialog"):
+        render_scorecard_dialog()
 
 
 def format_judge_scores_for_display(scores_df: pd.DataFrame) -> pd.DataFrame:
@@ -623,6 +483,34 @@ def format_judge_scores_for_display(scores_df: pd.DataFrame) -> pd.DataFrame:
         "updated_at": "Updated",
     }
     return formatted.rename(columns=rename_map)
+
+
+def render_scorecard_content() -> None:
+    st.markdown("**Total:** 20 points. Score each criterion from 1 to 4, then sum all five criteria.")
+    scale_cols = st.columns(4)
+    scale_cols[0].metric("1", "Underachieving")
+    scale_cols[1].metric("2", "Average")
+    scale_cols[2].metric("3", "Proficient")
+    scale_cols[3].metric("4", "Exceptional")
+
+    for field in PIH_SCORE_FIELDS:
+        with st.container(border=True):
+            st.markdown(f"#### {field['display']}")
+            st.write(field["help"])
+
+    st.markdown("#### What Judges Should Look For")
+    st.write("Grounded answers with the source visible, a quick accuracy tally, and a flag-guide-capture-persist loop for unanswered questions.")
+    st.markdown("#### Required Submission Artifacts")
+    st.write("Demo video, test-set answers, and one generated project one-pager / sales brief.")
+    st.caption("Source: pih_hackathon_design_qa_extracted.md")
+
+
+@st.dialog("PIH Hackathon Scorecard", width="large")
+def render_scorecard_dialog() -> None:
+    render_scorecard_content()
+    if st.button("Close scoring guide", use_container_width=True):
+        st.session_state["show_scorecard_dialog"] = False
+        st.rerun()
 
 
 def find_nested_answer_container(payload: Any) -> Any:
@@ -1210,10 +1098,23 @@ def render_submission_json(submission_json: str) -> None:
     if not submission_json:
         st.caption("No JSON payload submitted.")
         return
-    try:
-        st.json(json.loads(submission_json))
-    except Exception:
-        st.code(submission_json, language="json")
+
+    submitted_answers = extract_submitted_answers(submission_json)
+    size_kb = len(submission_json.encode("utf-8")) / 1024
+    st.success("JSON payload submitted. Raw JSON is hidden from the judge page.")
+    if submitted_answers:
+        st.caption(f"{len(submitted_answers)} answer(s) detected. Use the comparison below for review.")
+    else:
+        st.caption("Submitted payload is stored, but no numbered answers were detected.")
+    st.download_button(
+        "Download submitted JSON",
+        data=submission_json,
+        file_name="submitted_project_answers.json",
+        mime="application/json",
+        help="Download only if you need to inspect the raw participant payload.",
+        use_container_width=True,
+        key=f"submitted_json_download_{len(submission_json)}_{int(size_kb * 100)}",
+    )
 
 
 def render_correctness_assessment(submission_json: str, stored_summary: str = "", stored_score: Any = None) -> None:
@@ -1317,34 +1218,77 @@ def render_public_submission() -> None:
     if not db_configured():
         st.warning("Databricks secrets are not configured. Submissions are only kept in this Streamlit session.")
 
+    st.caption("Fields marked * are required.")
+    template_col, prompt_col = st.columns(2)
+    participant_template_path = Path(APP_ROOT) / "participant_submission_template.json"
+    sales_prompt_path = Path(APP_ROOT) / "participant_sales_brief_generation_prompt.docx"
+    with template_col:
+        if participant_template_path.exists():
+            st.download_button(
+                "Download answer JSON template",
+                data=participant_template_path.read_bytes(),
+                file_name=participant_template_path.name,
+                mime="application/json",
+                use_container_width=True,
+            )
+    with prompt_col:
+        if sales_prompt_path.exists():
+            st.download_button(
+                "Download sales brief prompt",
+                data=sales_prompt_path.read_bytes(),
+                file_name=sales_prompt_path.name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+
     with st.form("public_submission_form"):
+        st.markdown("#### Team and Links")
         c1, c2 = st.columns(2)
         with c1:
             project_name = st.text_input(
-                "Team name",
+                "Team name *",
                 help="Use the exact team name shared by the organizers.",
             )
-            submitter_name = st.text_input("Your name")
-            submitter_email = st.text_input("Your email")
+            submitter_name = st.text_input("Your name *")
+            submitter_email = st.text_input("Your email *", placeholder="name@company.com")
             submission_url = st.text_input("Prototype or app URL (optional)")
         with c2:
             source_code_url = st.text_input("GitHub / source code URL (optional)")
-            video_url = st.text_input("Video URL", placeholder="OneDrive, YouTube, Loom, or direct video URL")
+            video_url = st.text_input(
+                "Demo video URL *",
+                placeholder="OneDrive, YouTube, Loom, or direct video URL",
+                help="Required so judges can verify the working demo.",
+            )
+
+        st.markdown("#### Required Artifacts")
+        evidence_col, brief_col = st.columns(2)
+        with evidence_col:
             screenshots = st.file_uploader(
-                "Screenshots",
+                "Screenshots (optional)",
                 type=["png", "jpg", "jpeg", "webp"],
                 accept_multiple_files=True,
+                help="Upload useful UI screenshots. This is optional if the video is clear.",
             )
+        with brief_col:
             sales_brief_file = st.file_uploader(
-                "Sales brief / one-pager (PDF, DOC, DOCX, or image)",
+                "Sales brief / one-pager *",
                 type=["pdf", "doc", "docx", "png", "jpg", "jpeg", "webp"],
                 accept_multiple_files=False,
+                help="Submit the generated sales brief as PDF, DOC, DOCX, or image.",
             )
-            description = st.text_area("Short project description", height=110)
+
+        description = st.text_area(
+            "Short project description *",
+            height=110,
+            placeholder="Briefly describe what your project does and how judges should test it.",
+        )
+
+        st.markdown("#### Answer JSON")
         submission_json = st.text_area(
-            "Paste JSON output / response",
+            "Paste completed answer JSON *",
             height=220,
-            placeholder='{"project": "Example", "result": "..."}',
+            placeholder='{\n  "participant": {\n    "team_name": "",\n    "submitter_name": "",\n    "submitter_email": ""\n  },\n  "answers": [\n    {\n      "question_number": 1,\n      "question": "...",\n      "answer": "..."\n    }\n  ]\n}',
+            help="Paste the completed participant_submission_template.json content. Judges will see the comparison, not the full raw JSON.",
         )
 
         submitted = st.form_submit_button("Submit for judging", use_container_width=True)
@@ -1357,7 +1301,9 @@ def render_public_submission() -> None:
         errors.append("Team name is required. Use the exact team name shared by the organizers.")
     if not submitter_name.strip():
         errors.append("Your name is required.")
-    if submitter_email.strip() and not is_email(submitter_email):
+    if not submitter_email.strip():
+        errors.append("Your email is required.")
+    elif not is_email(submitter_email):
         errors.append("Enter a valid email address.")
     if not video_url.strip():
         errors.append("Video URL is required.")
@@ -1367,8 +1313,14 @@ def render_public_submission() -> None:
         errors.append("Prototype/app URL must start with http:// or https://.")
     if source_code_url.strip() and not is_url(source_code_url):
         errors.append("GitHub/source code URL must start with http:// or https://.")
+    if sales_brief_file is None:
+        errors.append("Sales brief / one-pager is required.")
+    if not description.strip():
+        errors.append("Short project description is required.")
     if len(description) > MAX_TEXT_CHARS:
         errors.append(f"Description must be {MAX_TEXT_CHARS:,} characters or fewer.")
+    if not submission_json.strip():
+        errors.append("Completed answer JSON is required.")
     if len(submission_json) > MAX_JSON_CHARS:
         errors.append(f"JSON payload must be {MAX_JSON_CHARS:,} characters or fewer.")
     if submission_json.strip():
