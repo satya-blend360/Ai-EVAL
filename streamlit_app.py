@@ -144,6 +144,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Helper function to load reports from filesystem
+def hide_public_submission_sidebar() -> None:
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] {
+                display: none;
+            }
+            [data-testid="collapsedControl"] {
+                display: none;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def load_all_reports() -> List[Dict[str, Any]]:
     reports = []
     if REPORTS_DIR.exists():
@@ -1219,27 +1235,15 @@ def render_public_submission() -> None:
         st.warning("Databricks secrets are not configured. Submissions are only kept in this Streamlit session.")
 
     st.caption("Fields marked * are required.")
-    template_col, prompt_col = st.columns(2)
     participant_template_path = Path(APP_ROOT) / "participant_submission_template.json"
-    sales_prompt_path = Path(APP_ROOT) / "participant_sales_brief_generation_prompt.docx"
-    with template_col:
-        if participant_template_path.exists():
-            st.download_button(
-                "Download answer JSON template",
-                data=participant_template_path.read_bytes(),
-                file_name=participant_template_path.name,
-                mime="application/json",
-                use_container_width=True,
-            )
-    with prompt_col:
-        if sales_prompt_path.exists():
-            st.download_button(
-                "Download sales brief prompt",
-                data=sales_prompt_path.read_bytes(),
-                file_name=sales_prompt_path.name,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True,
-            )
+    if participant_template_path.exists():
+        st.download_button(
+            "Download answer JSON template",
+            data=participant_template_path.read_bytes(),
+            file_name=participant_template_path.name,
+            mime="application/json",
+            use_container_width=True,
+        )
 
     with st.form("public_submission_form"):
         st.markdown("#### Team and Links")
@@ -1260,7 +1264,7 @@ def render_public_submission() -> None:
                 help="Required so judges can verify the working demo.",
             )
 
-        st.markdown("#### Required Artifacts")
+        st.markdown("#### Submission Artifacts")
         evidence_col, brief_col = st.columns(2)
         with evidence_col:
             screenshots = st.file_uploader(
@@ -1691,7 +1695,7 @@ if not st.session_state.get("judge_logged_in"):
         st.sidebar.link_button("Open submit page", "?page=submit", use_container_width=True)
         render_login()
     else:
-        st.sidebar.empty()
+        hide_public_submission_sidebar()
         render_public_submission()
     st.stop()
 

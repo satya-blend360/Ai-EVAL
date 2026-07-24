@@ -1,5 +1,5 @@
 {
-  "instructions": "Participants submit a demo video, completed test-set answers, and one generated project one-pager/sales brief. Fill every answer field.",
+  "instructions": "Participants submit completed test-set answers. Fill every answer field.",
   "participant": {
     "team_name": "",
     "submitter_name": "",
@@ -156,28 +156,5 @@
       "question": "In the financial services marketing campaign process reimagining case, what quantified improvements came from the work?",
       "answer": ""
     }
-  ],
-  "project_one_pager": {
-    "title": "",
-    "one_line_descriptor": "",
-    "generated_on": "",
-    "client_or_case_study": "",
-    "executive_summary": "",
-    "challenge": "",
-    "our_solution": "",
-    "key_features": [
-      {
-        "name": "",
-        "description": ""
-      }
-    ],
-    "quantified_outcomes": [
-      ""
-    ],
-    "business_value": "",
-    "delivery_team_or_owner": "",
-    "known_gaps": [
-      ""
-    ]
-  }
+  ]
 }
