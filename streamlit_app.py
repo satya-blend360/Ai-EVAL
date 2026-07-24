@@ -1288,8 +1288,14 @@ def render_public_submission() -> None:
         )
 
         st.markdown("#### Answer JSON")
+        uploaded_json_file = st.file_uploader(
+            "Upload completed answer JSON file",
+            type=["json"],
+            accept_multiple_files=False,
+            help="Upload the completed participant_submission_template.json file, or paste the JSON below.",
+        )
         submission_json = st.text_area(
-            "Paste completed answer JSON *",
+            "Or paste completed answer JSON",
             height=220,
             placeholder='{\n  "participant": {\n    "team_name": "",\n    "submitter_name": "",\n    "submitter_email": ""\n  },\n  "answers": [\n    {\n      "question_number": 1,\n      "question": "...",\n      "answer": "..."\n    }\n  ]\n}',
             help="Paste the completed participant_submission_template.json content. Judges will see the comparison, not the full raw JSON.",
@@ -1300,7 +1306,18 @@ def render_public_submission() -> None:
     if not submitted:
         return
 
-    errors = []
+    final_submission_json = submission_json.strip()
+    if uploaded_json_file is not None:
+        try:
+            final_submission_json = uploaded_json_file.getvalue().decode("utf-8").strip()
+        except UnicodeDecodeError:
+            final_submission_json = ""
+            errors = ["Uploaded JSON file must be UTF-8 text."]
+        else:
+            errors = []
+    else:
+        errors = []
+
     if not project_name.strip():
         errors.append("Team name is required. Use the exact team name shared by the organizers.")
     if not submitter_name.strip():
@@ -1323,15 +1340,15 @@ def render_public_submission() -> None:
         errors.append("Short project description is required.")
     if len(description) > MAX_TEXT_CHARS:
         errors.append(f"Description must be {MAX_TEXT_CHARS:,} characters or fewer.")
-    if not submission_json.strip():
-        errors.append("Completed answer JSON is required.")
-    if len(submission_json) > MAX_JSON_CHARS:
+    if not final_submission_json:
+        errors.append("Completed answer JSON is required. Upload a JSON file or paste the JSON.")
+    if len(final_submission_json) > MAX_JSON_CHARS:
         errors.append(f"JSON payload must be {MAX_JSON_CHARS:,} characters or fewer.")
-    if submission_json.strip():
+    if final_submission_json:
         try:
-            json.loads(submission_json)
+            json.loads(final_submission_json)
         except Exception:
-            errors.append("The pasted JSON is not valid JSON.")
+            errors.append("The submitted JSON is not valid JSON.")
     if errors:
         for error in errors:
             st.error(error)
@@ -1347,7 +1364,7 @@ def render_public_submission() -> None:
                 "submission_url": submission_url.strip(),
                 "video_url": video_url.strip(),
                 "description": combine_description_with_source_link(description, source_code_url),
-                "submission_json": submission_json.strip(),
+                "submission_json": final_submission_json,
                 "screenshots_json": screenshots_json,
             }
         )
