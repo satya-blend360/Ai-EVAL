@@ -237,8 +237,9 @@ MAX_TEXT_CHARS = 5_000
 DATABRICKS_PARAMETER_LIMIT_CHARS = 1_048_576
 SUBMISSION_PARAMETER_LIMIT_CHARS = 900_000
 MAX_COMBINED_UPLOAD_BYTES = 600 * 1024
+MAX_SINGLE_SCREENSHOT_BYTES = 150 * 1024
 MAX_SCREENSHOT_BYTES = MAX_COMBINED_UPLOAD_BYTES
-MAX_SALES_BRIEF_BYTES = MAX_COMBINED_UPLOAD_BYTES
+MAX_SALES_BRIEF_BYTES = 450 * 1024
 
 
 def safe_identifier(value: str, default: str) -> str:
@@ -1214,6 +1215,11 @@ def encode_submission_files(screenshot_files, sales_brief_file=None) -> str:
         raise ValueError(f"Upload {MAX_SCREENSHOTS} screenshots or fewer.")
     for uploaded_file in screenshot_files or []:
         content = uploaded_file.getvalue()
+        if len(content) > MAX_SINGLE_SCREENSHOT_BYTES:
+            raise ValueError(
+                f"{uploaded_file.name} is {format_file_size(len(content))}. "
+                f"Each screenshot must be {format_file_size(MAX_SINGLE_SCREENSHOT_BYTES)} or less."
+            )
         total_bytes += len(content)
         if total_bytes > MAX_SCREENSHOT_BYTES:
             raise ValueError(
@@ -1431,22 +1437,29 @@ def render_public_submission() -> None:
         evidence_col, brief_col = st.columns(2)
         with evidence_col:
             screenshots = st.file_uploader(
-                "Screenshots (optional)",
+                f"Screenshots (optional, max {format_file_size(MAX_SINGLE_SCREENSHOT_BYTES)} each)",
                 type=["png", "jpg", "jpeg", "webp"],
                 accept_multiple_files=True,
-                help="Upload useful UI screenshots. This is optional if the video is clear.",
+                help=(
+                    f"Upload up to {MAX_SCREENSHOTS} compressed screenshots. "
+                    f"Each screenshot must be {format_file_size(MAX_SINGLE_SCREENSHOT_BYTES)} or less."
+                ),
             )
         with brief_col:
             sales_brief_file = st.file_uploader(
-                "Sales brief / one-pager *",
+                f"Sales brief / one-pager * (max {format_file_size(MAX_SALES_BRIEF_BYTES)})",
                 type=["pdf", "doc", "docx", "png", "jpg", "jpeg", "webp"],
                 accept_multiple_files=False,
-                help="Submit the generated sales brief as PDF, DOC, DOCX, or image.",
+                help=(
+                    "Submit the generated sales brief as PDF, DOC, DOCX, or image. "
+                    f"Keep it {format_file_size(MAX_SALES_BRIEF_BYTES)} or less."
+                ),
             )
         current_upload_bytes = total_uploaded_file_size(screenshots, sales_brief_file)
         st.caption(
-            "Upload size limit: screenshots plus sales brief must stay under "
-            f"{format_file_size(MAX_COMBINED_UPLOAD_BYTES)} total. Databricks allows about "
+            f"File limits: each screenshot <= {format_file_size(MAX_SINGLE_SCREENSHOT_BYTES)}, "
+            f"sales brief <= {format_file_size(MAX_SALES_BRIEF_BYTES)}, and all uploads together <= "
+            f"{format_file_size(MAX_COMBINED_UPLOAD_BYTES)}. Databricks allows about "
             f"{DATABRICKS_PARAMETER_LIMIT_CHARS:,} characters per insert, and uploaded files expand when stored."
         )
         if current_upload_bytes:
