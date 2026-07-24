@@ -231,11 +231,14 @@ PORTAL_PASSWORD = get_secret("JUDGE_PORTAL_PASSWORD", "123")
 COMPANY_DOMAIN = "blend360.com"
 DB_CATALOG = get_secret("DATABRICKS_CATALOG", "sandbox")
 DB_SCHEMA = get_secret("DATABRICKS_SCHEMA", "ai_eval_judge_portal")
-MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
 MAX_SCREENSHOTS = 5
-MAX_SALES_BRIEF_BYTES = 10 * 1024 * 1024
 MAX_JSON_CHARS = 100_000
 MAX_TEXT_CHARS = 5_000
+DATABRICKS_PARAMETER_LIMIT_CHARS = 1_048_576
+SUBMISSION_PARAMETER_LIMIT_CHARS = 900_000
+MAX_COMBINED_UPLOAD_BYTES = 600 * 1024
+MAX_SCREENSHOT_BYTES = MAX_COMBINED_UPLOAD_BYTES
+MAX_SALES_BRIEF_BYTES = MAX_COMBINED_UPLOAD_BYTES
 
 
 def safe_identifier(value: str, default: str) -> str:
@@ -299,6 +302,25 @@ def is_url(value: str) -> bool:
     if not value:
         return True
     return re.fullmatch(r"https?://[^\s]+", value.strip(), flags=re.IGNORECASE) is not None
+
+
+def format_file_size(size_bytes: int) -> str:
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    return f"{size_bytes / 1024:.0f} KB"
+
+
+def uploaded_file_size(uploaded_file: Any) -> int:
+    if uploaded_file is None:
+        return 0
+    size = getattr(uploaded_file, "size", None)
+    if isinstance(size, int):
+        return size
+    return len(uploaded_file.getvalue())
+
+
+def total_uploaded_file_size(screenshot_files: Any, sales_brief_file: Any) -> int:
+    return sum(uploaded_file_size(file) for file in screenshot_files or []) + uploaded_file_size(sales_brief_file)
 
 
 def combine_description_with_source_link(description: str, source_code_url: str) -> str:
@@ -1058,6 +1080,13 @@ def create_submission(values: Dict[str, Any]) -> None:
         st.session_state.setdefault("local_extra_submissions", []).append(submission)
         load_submissions.clear()
         return
+    parameter_chars = estimate_databricks_parameter_chars(submission)
+    if parameter_chars > SUBMISSION_PARAMETER_LIMIT_CHARS:
+        raise ValueError(
+            f"Submission payload is too large for Databricks SQL ({parameter_chars:,} characters). "
+            f"Keep the saved payload under {SUBMISSION_PARAMETER_LIMIT_CHARS:,} characters. "
+            "Please compress screenshots/sales brief, upload fewer files, or share large artifacts as links."
+        )
     run_db_query(
         f"""
         INSERT INTO {DB_PREFIX}.submissions (
@@ -1174,13 +1203,22 @@ def should_fallback_to_standard_evaluation(exc: Exception) -> bool:
 def encode_submission_files(screenshot_files, sales_brief_file=None) -> str:
     files = []
     total_bytes = 0
+    combined_upload_bytes = total_uploaded_file_size(screenshot_files, sales_brief_file)
+    if combined_upload_bytes > MAX_COMBINED_UPLOAD_BYTES:
+        raise ValueError(
+            f"Uploaded files total {format_file_size(combined_upload_bytes)}. "
+            f"Keep screenshots plus sales brief under {format_file_size(MAX_COMBINED_UPLOAD_BYTES)} total, "
+            "or share large files as links."
+        )
     if len(screenshot_files or []) > MAX_SCREENSHOTS:
         raise ValueError(f"Upload {MAX_SCREENSHOTS} screenshots or fewer.")
     for uploaded_file in screenshot_files or []:
         content = uploaded_file.getvalue()
         total_bytes += len(content)
         if total_bytes > MAX_SCREENSHOT_BYTES:
-            raise ValueError("Screenshot uploads must be 10 MB or less in total.")
+            raise ValueError(
+                f"Screenshot uploads must be {format_file_size(MAX_SCREENSHOT_BYTES)} or less in total."
+            )
         files.append(
             {
                 "name": uploaded_file.name,
@@ -1194,7 +1232,7 @@ def encode_submission_files(screenshot_files, sales_brief_file=None) -> str:
     if sales_brief_file is not None:
         content = sales_brief_file.getvalue()
         if len(content) > MAX_SALES_BRIEF_BYTES:
-            raise ValueError("Sales brief upload must be 10 MB or less.")
+            raise ValueError(f"Sales brief upload must be {format_file_size(MAX_SALES_BRIEF_BYTES)} or less.")
         files.append(
             {
                 "name": sales_brief_file.name,
@@ -1205,6 +1243,10 @@ def encode_submission_files(screenshot_files, sales_brief_file=None) -> str:
             }
         )
     return json.dumps(files)
+
+
+def estimate_databricks_parameter_chars(parameters: Dict[str, Any]) -> int:
+    return sum(len("" if value is None else str(value)) for value in parameters.values())
 
 
 def encode_screenshots(uploaded_files) -> str:
@@ -1401,6 +1443,21 @@ def render_public_submission() -> None:
                 accept_multiple_files=False,
                 help="Submit the generated sales brief as PDF, DOC, DOCX, or image.",
             )
+        current_upload_bytes = total_uploaded_file_size(screenshots, sales_brief_file)
+        st.caption(
+            "Upload size limit: screenshots plus sales brief must stay under "
+            f"{format_file_size(MAX_COMBINED_UPLOAD_BYTES)} total. Databricks allows about "
+            f"{DATABRICKS_PARAMETER_LIMIT_CHARS:,} characters per insert, and uploaded files expand when stored."
+        )
+        if current_upload_bytes:
+            size_message = (
+                f"Selected upload size: {format_file_size(current_upload_bytes)} / "
+                f"{format_file_size(MAX_COMBINED_UPLOAD_BYTES)} app limit."
+            )
+            if current_upload_bytes > MAX_COMBINED_UPLOAD_BYTES:
+                st.warning(size_message + " Please compress files or use links before submitting.")
+            else:
+                st.caption(size_message)
 
         description = st.text_area(
             "Short project description *",
@@ -1470,13 +1527,19 @@ def render_public_submission() -> None:
             json.loads(final_submission_json)
         except Exception:
             errors.append("The submitted JSON is not valid JSON.")
+
+    screenshots_json = "[]"
+    try:
+        screenshots_json = encode_submission_files(screenshots, sales_brief_file)
+    except ValueError as exc:
+        errors.append(str(exc))
+
     if errors:
         for error in errors:
             st.error(error)
         return
 
     try:
-        screenshots_json = encode_submission_files(screenshots, sales_brief_file)
         create_submission(
             {
                 "project_name": project_name.strip(),
@@ -1489,6 +1552,9 @@ def render_public_submission() -> None:
                 "screenshots_json": screenshots_json,
             }
         )
+    except ValueError as exc:
+        st.error(str(exc))
+        return
     except Exception as exc:
         st.error(f"Could not save submission: {exc}")
         return
