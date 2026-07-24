@@ -1,13 +1,14 @@
 # Judge-Ready Evaluation Questions
 
-This file is compact-only and written for a sales-team dashboard evaluation. It keeps answers short so judges can match quickly. Use `match_keywords` for grading, and use `answer_source` only when a judge needs to verify the deck/slide.
+This file is generated from `judge_ready_evaluation_questions.docx` and used by the Streamlit judge portal.
+It keeps answers short so judges can match quickly. Use `match_keywords` for grading, and use `answer_source` only when a judge needs to verify the deck/slide.
 
 ## Question 1
 
 file_name:
 - 25.7.14_NCL_Proposal_V1 - Copy.pptx
 - NCL-Steering-Committee-122025 - Copy.pptx
-- 2026.02.09 - SteeringCommittee - Copy.pptx
+- 2026.02.09 – Steering Committee - Copy.pptx
 
 question:
 For a sales rep preparing an NCL Snowflake ML modernization proof point, what capability was proposed in July, designed by December, and operational by February with 61 features?
@@ -18,7 +19,7 @@ Snowflake feature store.
 answer_source:
 - 25.7.14_NCL_Proposal_V1 - Copy.pptx, slide 2 and slide 3
 - NCL-Steering-Committee-122025 - Copy.pptx, slide 3
-- 2026.02.09 - SteeringCommittee - Copy.pptx, slide 8
+- 2026.02.09 – Steering Committee - Copy.pptx, slide 8
 
 question_type:
 sales proof point / retrieval / multi-doc
@@ -453,3 +454,163 @@ sales proof point / quantified outcome
 
 match_keywords:
 50K; 5K; $0.50-$0.80; $0.05-$0.10; 70-75%; 85-90%; 12-14 min; 4-6 min
+
+## Question 23
+
+file_name:
+- _002_BTS_Mastercard_Financial Services_Analyzing Sales Enablement in Global Regions.pptx
+
+question:
+In the Mastercard financial services sales enablement case for global regions, what business need did the work address for a geographically diverse sales force?
+
+answer:
+Accelerate product sales with better marketing materials, sales enablement, and targeted content.
+
+answer_source:
+- _002_BTS_Mastercard_Financial Services_Analyzing Sales Enablement in Global Regions.pptx, slide 1
+
+question_type:
+sales enablement / factual retrieval
+
+match_keywords:
+accelerate product sales; marketing materials; sales enablement; targeted content
+
+## Question 24
+
+file_name:
+- _003_BTS_Mastercard_Financial Services_Understanding What Makes Best in Class B2B Brands Exceptional .pptx
+
+question:
+In the Mastercard financial services case on understanding best-in-class B2B brands, what framework did the work create for B2B marketing strategy?
+
+answer:
+A comparative multi-dimensional framework with composite scores and dimensions.
+
+answer_source:
+- _003_BTS_Mastercard_Financial Services_Understanding What Makes Best in Class B2B Brands Exceptional .pptx, slide 1
+
+question_type:
+marketing leadership / retrieval
+
+match_keywords:
+comparative framework; multi-dimensional; composite scores; dimensions; B2B
+
+## Question 25
+
+file_name:
+- _055_DSX_JCrew_Retail_Customer & Marketing Insights Dashboard .pptx
+
+question:
+For a marketing analytics leader, what reporting problem did the J.Crew dashboard solve?
+
+answer:
+Manual, fragmented reporting across brands from multiple data sources and PowerPoint/Excel snapshots.
+
+answer_source:
+- _055_DSX_JCrew_Retail_Customer & Marketing Insights Dashboard .pptx, slide 1
+
+question_type:
+marketing analytics / factual retrieval
+
+match_keywords:
+manual reporting; fragmented reporting; multiple data sources; PowerPoint; Excel; across brands
+
+## Question 26
+
+file_name:
+- _071_DSX_KSM_MarketingMediaAgency_Dataroma Dashboard Build.pptx
+
+question:
+In the KSM marketing media agency Datorama dashboard case, what did the dashboard help measure and attribute?
+
+answer:
+Market-level advertising impact and attribution to offline prospects or leads.
+
+answer_source:
+- _071_DSX_KSM_MarketingMediaAgency_Dataroma Dashboard Build.pptx, slide 1
+
+question_type:
+marketing performance / retrieval
+
+match_keywords:
+market-level impact; advertising; attribution; offline; prospects; leads
+
+## Question 27
+
+file_name:
+- _145_CVS_Healthcare & Life Sciences_ Business Strategy & AI Consulting_Sales Enablement Growth GPT.pptx
+
+question:
+In the CVS healthcare Sales Enablement Growth GPT case, what volume problem did the tool address for insurance sales reps?
+
+answer:
+750k+ annual calls where agents manually searched complex Medicare/Medicaid documentation.
+
+answer_source:
+- 145_CVS_Healthcare & Life Sciences Business Strategy & AI Consulting_Sales Enablement Growth GPT.pptx, slide 1
+
+question_type:
+sales enablement / quantified factual
+
+match_keywords:
+750k+ calls; manually searched; Medicare; Medicaid; documentation
+
+## Question 28
+
+file_name:
+- _155_Upfield_Retail_Data Engineering_Enterprise Operations_Insource Marketing Mix Modeling.pptx
+
+question:
+In the Upfield retail case about insourcing marketing mix modeling, what quantified outcomes were reported?
+
+answer:
+7 markets deployed, 25% media efficiency increase, and 75% long-term cost savings.
+
+answer_source:
+- _155_Upfield_Retail_Data Engineering_Enterprise Operations_Insource Marketing Mix Modeling.pptx, slide 1 and slide 2
+
+question_type:
+marketing leadership / quantified outcome
+
+match_keywords:
+7 markets; 25%; media efficiency; 75%; cost savings; MMM
+
+## Question 29
+
+file_name:
+- _173_Travel & Hospitality_Data Science & Insights_Customer Experience_Guest Offer Optimization Engine.pptx
+
+question:
+In the travel and hospitality Guest Offer Optimization Engine case, what business impact did the solution deliver?
+
+answer:
+$24M incremental revenue, $1.2M promotion cost savings, and 85% higher promotion ROI.
+
+answer_source:
+- _173_Travel & Hospitality_Data Science & Insights_Customer Experience_Guest Offer Optimization Engine.pptx, slide 1
+
+question_type:
+sales proof point / quantified outcome
+
+match_keywords:
+$24M; incremental revenue; $1.2M; promotion cost savings; 85%; ROI
+
+## Question 30
+
+file_name:
+- _176_Financial Services_Business Strategy & AI Consulting_Customer Experience_Marketing Campaign Process Reimagining.pptx
+
+question:
+In the financial services marketing campaign process reimagining case, what quantified improvements came from the work?
+
+answer:
+50% faster campaign execution, 40% more campaign capacity, maturity 2.1 to 3.1, and 65% fewer compliance meetings.
+
+answer_source:
+- _176_Financial Services_Business Strategy & AI Consulting_Customer Experience_Marketing Campaign Process Reimagining.pptx, slide 1
+
+question_type:
+leadership / marketing operations / quantified outcome
+
+match_keywords:
+50%; campaign execution; 40%; campaign capacity; 2.1; 3.1; 65%; compliance meetings

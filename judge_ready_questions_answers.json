@@ -1,0 +1,156 @@
+{
+  "source": "judge_ready_evaluation_questions.docx",
+  "generated_at": "2026-07-24T18:32:53",
+  "questions": [
+    {
+      "question_number": 1,
+      "question": "For a sales rep preparing an NCL Snowflake ML modernization proof point, what capability was proposed in July, designed by December, and operational by February with 61 features?",
+      "answer": "Snowflake feature store."
+    },
+    {
+      "question_number": 2,
+      "question": "For a sales dashboard proof point on NCL's Snowflake migration, which two model groups made up the 5 models migrated by February 2026?",
+      "answer": "Contact Models for OCI/RSSC and Email & Direct Mail Frequency Models for NCL/OCI/RSSC."
+    },
+    {
+      "question_number": 3,
+      "question": "In the NCL model inventory materials, the proposal says about 20 models but later steering decks say 14 total models. Which number should be used as the finalized inventory?",
+      "answer": "14 total models, with 6 priority models."
+    },
+    {
+      "question_number": 4,
+      "question": "If a sales rep needs one quantified NCL speed-to-market proof point, what was the reported CI/CD release-time improvement?",
+      "answer": "From days to 30 minutes, a 98% time reduction."
+    },
+    {
+      "question_number": 5,
+      "question": "For a prospect concerned about black-box legacy ML tools, which legacy platform did NCL's new Snowflake ML architecture reduce dependency on?",
+      "answer": "Salesforce / Salesforce Einstein."
+    },
+    {
+      "question_number": 6,
+      "question": "If a sales rep asks for Marriott's original annual marketing budget and recommended channel allocation from the hospitality allocation optimization case study, what should the system answer?",
+      "answer": "This data is not available in the deck."
+    },
+    {
+      "question_number": 7,
+      "question": "For a Marriott hospitality marketing measurement sales conversation, what data sources or platforms were used to develop the multi-touch attribution solution?",
+      "answer": "Snowflake, Adobe Analytics, DoubleClick Campaign Manager."
+    },
+    {
+      "question_number": 8,
+      "question": "For a retail sales prospect asking for a measurement case study, what was Walmart's synthetic-control use case and key impact?",
+      "answer": "Use case: incrementality measurement through app downloads. Impact #1: developed the analysis for ~15MM downloads per year and estimated incremental lift of 38% in revenue through app downloads. Impact #2: identified high-value media sources to advise future annual media spend strategy."
+    },
+    {
+      "question_number": 9,
+      "question": "For a sales rep positioning the Agentic Data Platform, what are the three integrated layers of the proposed solution?",
+      "answer": "AI-Ready Data Foundation, Autonomous Data Operations, and Agentic Analytics."
+    },
+    {
+      "question_number": 10,
+      "question": "For a sales rep explaining the Agentic Knowledge Platform, what does the platform unify into an AI-ready foundation?",
+      "answer": "Enterprise knowledge."
+    },
+    {
+      "question_number": 11,
+      "question": "For sales enablement planning, what are the key deliverables for the AI-Native Data Foundation roadmap's Best Solution Deliverables workstream?",
+      "answer": "HLD/LLD templates, vertical starter kits, and a sample project plan."
+    },
+    {
+      "question_number": 12,
+      "question": "For a hospitality sales prospect interested in AI-powered booking search, what were the main quantified impacts from the hotel intent-search case study?",
+      "answer": "10ms mean response time, 90% improvement, 50% compute cost reduction, $85k-$150k annual savings, and $20-$50M projected first-year revenue."
+    },
+    {
+      "question_number": 13,
+      "question": "Which case study should a sales rep use for a hotel prospect that wants natural-language search, personalized property recommendations, and faster booking conversion?",
+      "answer": "AI-Powered Intent Search Revolutionizes Hotel Bookings."
+    },
+    {
+      "question_number": 14,
+      "question": "For an enterprise AI sales pitch, what 12-month outcome does the Agentic Data Platform claim for time to productionize AI use cases?",
+      "answer": "6-12 months reduced to 6-12 weeks, described as 10x faster."
+    },
+    {
+      "question_number": 15,
+      "question": "For AI-Native Data Foundation sales qualification, which target client types are listed?",
+      "answer": "Global Retail, Banking & Financial Services, Manufacturing, Tech/SaaS, and Large Enterprises."
+    },
+    {
+      "question_number": 16,
+      "question": "For a sales rep positioning the AI-Native Data Foundation, what technology stack is listed in the offering?",
+      "answer": "Snowflake, AWS, Databricks, and dbt Cloud."
+    },
+    {
+      "question_number": 17,
+      "question": "For a sales rep explaining the Vialto delivery story, what business problem was Blend addressing?",
+      "answer": "Manual, fragmented, document-heavy tax and immigration casework that raised cost-to-serve."
+    },
+    {
+      "question_number": 18,
+      "question": "For Vialto, what productivity coverage improvement did the move from Vanguard to Vlabs claim for UK Tax?",
+      "answer": "Coverage increased from 20% to 100% in weeks."
+    },
+    {
+      "question_number": 19,
+      "question": "In the Vialto evals delivery story, what four questions does every Plugin Enhancement Framework verdict answer?",
+      "answer": "Efficiency, integrity, correctness, and quality."
+    },
+    {
+      "question_number": 20,
+      "question": "For a Franklin Templeton sales proof point, what information-overload problem did PM Copilot address?",
+      "answer": "600+ daily articles across 200+ portfolio companies, with 85% noise."
+    },
+    {
+      "question_number": 21,
+      "question": "For Franklin Templeton PM Copilot, how many specialized AI agents transform raw data into investment signals?",
+      "answer": "6 specialized AI agents."
+    },
+    {
+      "question_number": 22,
+      "question": "For a Franklin Templeton sales proof point, what did context engineering improve in PM Copilot?",
+      "answer": "Reduced context from 50K to 5K tokens, reduced cost per recommendation from $0.50-$0.80 to $0.05-$0.10, improved PM satisfaction from 70-75% to 85-90%, and reduced processing from 12-14 minutes to 4-6 minutes."
+    },
+    {
+      "question_number": 23,
+      "question": "In the Mastercard financial services sales enablement case for global regions, what business need did the work address for a geographically diverse sales force?",
+      "answer": "Accelerate product sales with better marketing materials, sales enablement, and targeted content."
+    },
+    {
+      "question_number": 24,
+      "question": "In the Mastercard financial services case on understanding best-in-class B2B brands, what framework did the work create for B2B marketing strategy?",
+      "answer": "A comparative multi-dimensional framework with composite scores and dimensions."
+    },
+    {
+      "question_number": 25,
+      "question": "For a marketing analytics leader, what reporting problem did the J.Crew dashboard solve?",
+      "answer": "Manual, fragmented reporting across brands from multiple data sources and PowerPoint/Excel snapshots."
+    },
+    {
+      "question_number": 26,
+      "question": "In the KSM marketing media agency Datorama dashboard case, what did the dashboard help measure and attribute?",
+      "answer": "Market-level advertising impact and attribution to offline prospects or leads."
+    },
+    {
+      "question_number": 27,
+      "question": "In the CVS healthcare Sales Enablement Growth GPT case, what volume problem did the tool address for insurance sales reps?",
+      "answer": "750k+ annual calls where agents manually searched complex Medicare/Medicaid documentation."
+    },
+    {
+      "question_number": 28,
+      "question": "In the Upfield retail case about insourcing marketing mix modeling, what quantified outcomes were reported?",
+      "answer": "7 markets deployed, 25% media efficiency increase, and 75% long-term cost savings."
+    },
+    {
+      "question_number": 29,
+      "question": "In the travel and hospitality Guest Offer Optimization Engine case, what business impact did the solution deliver?",
+      "answer": "$24M incremental revenue, $1.2M promotion cost savings, and 85% higher promotion ROI."
+    },
+    {
+      "question_number": 30,
+      "question": "In the financial services marketing campaign process reimagining case, what quantified improvements came from the work?",
+      "answer": "50% faster campaign execution, 40% more campaign capacity, maturity 2.1 to 3.1, and 65% fewer compliance meetings."
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import time
 import re
 import uuid
 import base64
+from urllib import error, request
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -116,6 +117,87 @@ st.markdown("""
         border: 1px solid rgba(244, 63, 94, 0.3);
         color: #fecdd3;
     }
+
+    /* Judge review status badges */
+    .review-status-badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 0.82rem;
+        font-weight: 700;
+        margin-bottom: 10px;
+        border: 1px solid transparent;
+    }
+    .review-status-reviewed {
+        background-color: rgba(16, 185, 129, 0.14);
+        border-color: rgba(16, 185, 129, 0.42);
+        color: #a7f3d0;
+    }
+    .review-status-pending {
+        background-color: rgba(245, 158, 11, 0.14);
+        border-color: rgba(245, 158, 11, 0.46);
+        color: #fde68a;
+    }
+
+    /* Floating PIH hackathon scoring guide for judges */
+    .rubric-floating {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        z-index: 100000;
+        width: auto;
+        max-width: min(560px, calc(100vw - 32px));
+        color: #e2e8f0;
+        font-family: 'Inter', sans-serif;
+    }
+    .rubric-floating summary {
+        cursor: pointer;
+        list-style: none;
+        background: #0f172a;
+        border: 1px solid rgba(20, 184, 166, 0.55);
+        border-radius: 999px;
+        padding: 10px 16px;
+        color: #ccfbf1;
+        font-weight: 800;
+        box-shadow: 0 12px 28px rgba(2, 6, 23, 0.35);
+    }
+    .rubric-floating summary::-webkit-details-marker {
+        display: none;
+    }
+    .rubric-floating[open] {
+        width: min(560px, calc(100vw - 32px));
+        max-height: 78vh;
+        overflow: auto;
+        background: rgba(15, 23, 42, 0.98);
+        border: 1px solid rgba(20, 184, 166, 0.55);
+        border-radius: 12px;
+        padding: 14px;
+        box-shadow: 0 24px 60px rgba(2, 6, 23, 0.5);
+    }
+    .rubric-floating[open] summary {
+        display: inline-block;
+        margin-bottom: 12px;
+        box-shadow: none;
+    }
+    .rubric-floating h3 {
+        color: #f8fafc;
+        margin: 4px 0 8px;
+        font-size: 1rem;
+    }
+    .rubric-floating p,
+    .rubric-floating li {
+        font-size: 0.82rem;
+        line-height: 1.35;
+        margin: 4px 0;
+    }
+    .rubric-floating ul {
+        padding-left: 18px;
+        margin: 6px 0 10px;
+    }
+    .rubric-floating strong {
+        color: #99f6e4;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -167,6 +249,41 @@ DB_CATALOG = safe_identifier(DB_CATALOG, "sandbox")
 DB_SCHEMA = safe_identifier(DB_SCHEMA, "ai_eval_judge_portal")
 DB_PREFIX = f"{DB_CATALOG}.{DB_SCHEMA}"
 JUDGE_READY_QUESTIONS_PATH = Path(APP_ROOT) / "judge_ready_evaluation_questions.md"
+PIH_HACKATHON_DOC_PATH = Path(APP_ROOT) / "pih_hackathon_design_qa_extracted.md"
+
+PIH_SCORE_FIELDS = [
+    {
+        "storage_key": "accuracy",
+        "display": "Creativity, insight & relevance",
+        "short": "Creativity",
+        "help": "1: loosely tied to the project-knowledge problem. 2: straightforward but familiar. 3: clear solution with useful creative features. 4: highly original, thoughtful, and grounded in real user need.",
+    },
+    {
+        "storage_key": "completeness",
+        "display": "Answering from existing materials",
+        "short": "Grounded answers",
+        "help": "1: answers absent, wrong, or ungrounded. 2: some answers but weak coverage or sourcing. 3: reliable answers grounded in files with visible sources. 4: accurate held-out answers and works beyond the test phrasing.",
+    },
+    {
+        "storage_key": "presentation",
+        "display": "Gap-flagging & knowledge capture",
+        "short": "Gap capture",
+        "help": "1: gaps are not handled. 2: gaps are flagged but guidance or persistence is weak. 3: flags gaps, suggests who/how to close them, and captures answers. 4: smooth flag-guide-capture-persist loop.",
+    },
+    {
+        "storage_key": "business_impact",
+        "display": "Usable experience (MVP)",
+        "short": "Usability",
+        "help": "1: mostly concept; hard to use. 2: works but rough. 3: usable core workflow in chat, Cowork, agent, skill, or UI. 4: smooth, complete end-to-end experience.",
+    },
+    {
+        "storage_key": "technical_quality",
+        "display": "Impact & potential",
+        "short": "Impact",
+        "help": "1: limited practical value. 2: some potential but unclear audience or scale. 3: clear real-world value. 4: strong path to a scalable Blend tool.",
+    },
+]
+PIH_SCORE_MAX = len(PIH_SCORE_FIELDS) * 4
 
 
 def is_company_email(email: str) -> bool:
@@ -195,6 +312,113 @@ def db_configured() -> bool:
     )
 
 
+def databricks_host_url() -> str:
+    hostname = get_secret("DATABRICKS_SERVER_HOSTNAME").strip()
+    if not hostname:
+        return ""
+    if not re.match(r"^https?://", hostname, flags=re.IGNORECASE):
+        hostname = f"https://{hostname}"
+    return hostname.rstrip("/")
+
+
+def databricks_warehouse_id() -> str:
+    configured_id = get_secret("DATABRICKS_WAREHOUSE_ID").strip()
+    if configured_id:
+        return configured_id
+
+    match = re.search(r"/warehouses/([^/?#]+)", get_secret("DATABRICKS_HTTP_PATH"))
+    return match.group(1) if match else ""
+
+
+def warehouse_api_configured() -> bool:
+    return all(
+        [
+            databricks_host_url(),
+            get_secret("DATABRICKS_TOKEN"),
+            databricks_warehouse_id(),
+        ]
+    )
+
+
+def run_databricks_api(
+    path: str,
+    method: str = "GET",
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if not warehouse_api_configured():
+        raise RuntimeError("Databricks warehouse API configuration is incomplete.")
+
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    api_request = request.Request(
+        f"{databricks_host_url()}{path}",
+        data=body,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {get_secret('DATABRICKS_TOKEN')}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with request.urlopen(api_request, timeout=20) as response:
+            response_body = response.read().decode("utf-8")
+    except error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"Databricks API returned {exc.code}: {details or exc.reason}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Could not reach Databricks API: {exc.reason}") from exc
+
+    return json.loads(response_body) if response_body else {}
+
+
+@st.cache_data(ttl=20)
+def load_warehouse_status() -> Dict[str, Any]:
+    warehouse_id = databricks_warehouse_id()
+    if not warehouse_id:
+        raise RuntimeError("No Databricks warehouse id was found.")
+    return run_databricks_api(f"/api/2.0/sql/warehouses/{warehouse_id}")
+
+
+def start_warehouse() -> None:
+    warehouse_id = databricks_warehouse_id()
+    if not warehouse_id:
+        raise RuntimeError("No Databricks warehouse id was found.")
+    run_databricks_api(f"/api/2.0/sql/warehouses/{warehouse_id}/start", method="POST", payload={})
+    load_warehouse_status.clear()
+
+
+def render_starter_warehouse_sidebar() -> None:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Starter Warehouse")
+
+    if not warehouse_api_configured():
+        st.sidebar.caption("Warehouse status unavailable. Configure `DATABRICKS_WAREHOUSE_ID` or a warehouse `DATABRICKS_HTTP_PATH`.")
+        return
+
+    try:
+        warehouse = load_warehouse_status()
+        state = str(warehouse.get("state", "UNKNOWN")).upper()
+        name = warehouse.get("name") or "Starter Warehouse"
+        active = state == "RUNNING"
+        status_icon = "🟢" if active else "🟡" if state in {"STARTING", "RESIZING"} else "🔴"
+
+        st.sidebar.markdown(f"**{name}:** {status_icon} {state.title()}")
+        if not active:
+            starting = state in {"STARTING", "RESIZING"}
+            if st.sidebar.button(
+                "Start Starter Warehouse",
+                use_container_width=True,
+                disabled=starting,
+            ):
+                try:
+                    start_warehouse()
+                    st.sidebar.success("Start requested.")
+                    st.rerun()
+                except Exception as exc:
+                    st.sidebar.error(f"Could not start warehouse: {exc}")
+    except Exception as exc:
+        st.sidebar.error(f"Could not load warehouse status: {exc}")
+
 def run_db_query(query: str, parameters: Optional[Dict[str, Any]] = None, fetch: bool = False):
     if not db_configured():
         raise RuntimeError("Databricks secrets are not configured.")
@@ -222,7 +446,6 @@ def normalize_text(value: Any) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
-@st.cache_data
 def load_correct_answer_key() -> List[Dict[str, Any]]:
     if not JUDGE_READY_QUESTIONS_PATH.exists():
         return []
@@ -263,6 +486,73 @@ def load_correct_answer_key() -> List[Dict[str, Any]]:
 
 def correct_answer_key_json() -> str:
     return json.dumps(load_correct_answer_key(), ensure_ascii=False)
+
+
+def coerce_pih_score(value: Any) -> int:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 3
+    if numeric > 4:
+        numeric = numeric / 10.0 * 4.0
+    return int(min(4, max(1, round(numeric))))
+
+
+def pih_total_score(values: Dict[str, Any]) -> float:
+    return float(sum(coerce_pih_score(values[field["storage_key"]]) for field in PIH_SCORE_FIELDS))
+
+
+def render_hackathon_scoring_guide() -> None:
+    criteria_items = "".join(
+        f"<li><strong>{field['display']}</strong>: {field['help']}</li>"
+        for field in PIH_SCORE_FIELDS
+    )
+    source_note = (
+        "Source: pih_hackathon_design_qa_extracted.md"
+        if PIH_HACKATHON_DOC_PATH.exists()
+        else "Source: PIH Hackathon Design & Q&A document"
+    )
+    st.markdown(
+        f"""
+<details class="rubric-floating">
+    <summary>Scoring Guide</summary>
+    <h3>PIH Hackathon Scorecard</h3>
+    <p><strong>Total:</strong> 20 points. Score each criterion from 1 to 4, then sum all five criteria.</p>
+    <p><strong>1</strong> Underachieving &nbsp; <strong>2</strong> Average &nbsp; <strong>3</strong> Proficient &nbsp; <strong>4</strong> Exceptional</p>
+    <ul>
+        {criteria_items}
+    </ul>
+    <p><strong>Video evidence to look for:</strong> grounded answers with source visible, quick accuracy tally, and a flag-guide-capture-persist loop for unanswered questions.</p>
+    <p><strong>Submission artifacts:</strong> demo video, test-set answers with sources where relevant, and one generated project one-pager / sales brief.</p>
+    <p>{source_note}</p>
+</details>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def format_judge_scores_for_display(scores_df: pd.DataFrame) -> pd.DataFrame:
+    if scores_df.empty:
+        return scores_df
+    formatted = scores_df.copy()
+    score_columns = [field["storage_key"] for field in PIH_SCORE_FIELDS]
+    for column in score_columns:
+        if column in formatted.columns:
+            formatted[column] = formatted[column].apply(coerce_pih_score)
+    if all(column in formatted.columns for column in score_columns):
+        formatted["total_score"] = formatted[score_columns].sum(axis=1)
+    rename_map = {
+        "accuracy": "Creativity",
+        "completeness": "Grounded Answers",
+        "presentation": "Gap Capture",
+        "business_impact": "Usability",
+        "technical_quality": "Impact",
+        "total_score": "Total / 20",
+        "judge_email": "Judge",
+        "comments": "Comments",
+        "updated_at": "Updated",
+    }
+    return formatted.rename(columns=rename_map)
 
 
 def find_nested_answer_container(payload: Any) -> Any:
@@ -542,17 +832,21 @@ def load_my_review_summary(judge_email: str) -> pd.DataFrame:
 
 def load_my_score(submission_id: str, judge_email: str) -> Dict[str, Any]:
     defaults = {
-        "accuracy": 7.0,
-        "completeness": 7.0,
-        "presentation": 7.0,
-        "business_impact": 7.0,
-        "technical_quality": 7.0,
+        "accuracy": 3,
+        "completeness": 3,
+        "presentation": 3,
+        "business_impact": 3,
+        "technical_quality": 3,
         "comments": "",
     }
     if not db_configured():
-        return st.session_state.setdefault("local_judge_scores", {}).get(
+        score = st.session_state.setdefault("local_judge_scores", {}).get(
             f"{submission_id}:{judge_email}", defaults
         )
+        score = {**defaults, **score}
+        for field in PIH_SCORE_FIELDS:
+            score[field["storage_key"]] = coerce_pih_score(score.get(field["storage_key"]))
+        return score
     score_df = run_db_query(
         f"""
         SELECT accuracy, completeness, presentation, business_impact, technical_quality, comments
@@ -566,28 +860,23 @@ def load_my_score(submission_id: str, judge_email: str) -> Dict[str, Any]:
     if score_df.empty:
         return defaults
     row = score_df.iloc[0].to_dict()
-    return {**defaults, **{k: row.get(k, defaults[k]) for k in defaults}}
+    score = {**defaults, **{k: row.get(k, defaults[k]) for k in defaults}}
+    for field in PIH_SCORE_FIELDS:
+        score[field["storage_key"]] = coerce_pih_score(score.get(field["storage_key"]))
+    return score
 
 
 def save_judge_score(submission_id: str, judge_email: str, values: Dict[str, Any]) -> None:
-    total_score = sum(
-        [
-            values["accuracy"],
-            values["completeness"],
-            values["presentation"],
-            values["business_impact"],
-            values["technical_quality"],
-        ]
-    ) / 5.0
+    total_score = pih_total_score(values)
     score = {
         "score_id": f"score_{uuid.uuid4().hex[:12]}",
         "submission_id": submission_id,
         "judge_email": judge_email,
-        "accuracy": float(values["accuracy"]),
-        "completeness": float(values["completeness"]),
-        "presentation": float(values["presentation"]),
-        "business_impact": float(values["business_impact"]),
-        "technical_quality": float(values["technical_quality"]),
+        "accuracy": coerce_pih_score(values["accuracy"]),
+        "completeness": coerce_pih_score(values["completeness"]),
+        "presentation": coerce_pih_score(values["presentation"]),
+        "business_impact": coerce_pih_score(values["business_impact"]),
+        "technical_quality": coerce_pih_score(values["technical_quality"]),
         "total_score": float(total_score),
         "comments": values.get("comments", ""),
     }
@@ -743,6 +1032,48 @@ def update_ai_result(submission_id: str, ai_score: float, ai_summary: str) -> No
         },
     )
     load_submissions.clear()
+
+
+def run_standard_submission_evaluation(selected: Dict[str, Any]):
+    data = load_evaluation_data()
+    evaluator = AIEvaluator()
+    project_name = normalize_text(selected.get("project_name"))
+
+    if "horizon" in project_name:
+        hallucination_case = data.get("hallucination_cases", [None])[0]
+        return evaluator.run_evaluation(
+            hallucination_data={
+                "generated_answer": hallucination_case.get("generated_answer") if hallucination_case else "",
+                "evidence_texts": hallucination_case.get("evidence_texts") if hallucination_case else [],
+            }
+            if hallucination_case
+            else None
+        )
+
+    extraction_case = data.get("extraction_cases", [None])[0]
+    retrieval_case = data.get("retrieval_cases", [None])[0]
+    rag_case = data.get("rag_cases", [None])[0]
+    sales_case = data.get("sales_brief_cases", [None])[0]
+    return evaluator.run_evaluation(
+        extraction_data=extraction_case,
+        retrieval_data=retrieval_case,
+        rag_data=rag_case,
+        sales_brief_data=sales_case,
+    )
+
+
+def should_fallback_to_standard_evaluation(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        signal in message
+        for signal in [
+            "http error 404",
+            "http error 405",
+            "method not allowed",
+            "not found",
+            "expecting value",
+        ]
+    )
 
 
 def encode_screenshots(uploaded_files) -> str:
@@ -974,9 +1305,10 @@ def show_video_or_link(video_url: str) -> None:
 
 
 def render_judge_portal(judge_email: str) -> None:
+    render_hackathon_scoring_guide()
     st.markdown('<div class="main-title">Judge Portal</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="sub-title">Review project submissions, compare AI scores, and save judge marks.</div>',
+        '<div class="sub-title">Review PIH hackathon submissions using the five-criteria, 20-point scorecard.</div>',
         unsafe_allow_html=True,
     )
 
@@ -989,6 +1321,9 @@ def render_judge_portal(judge_email: str) -> None:
             st_autorefresh(interval=30000, key="judge_portal_autorefresh")
         except Exception:
             st.sidebar.caption("Auto-refresh package is unavailable in this environment.")
+
+    render_starter_warehouse_sidebar()
+
 
     if st.sidebar.button("Refresh data", use_container_width=True):
         load_submissions.clear()
@@ -1080,7 +1415,7 @@ def render_judge_portal(judge_email: str) -> None:
         with status_col:
             review = my_score_by_submission.get(selected_id)
             if review:
-                st.success(f"You reviewed this project. Your score: {float(review.get('total_score') or 0):.1f}/10")
+                st.success(f"You reviewed this project. Your score: {float(review.get('total_score') or 0):.1f}/20")
             else:
                 st.info("You have not reviewed this project yet.")
     else:
@@ -1135,9 +1470,14 @@ def render_judge_portal(judge_email: str) -> None:
                         "Hidden" if not show_ai_scores else "N/A" if pd.isna(ai_value) else f"{float(ai_value):.1f}",
                     )
                 with top_cols[2]:
-                    st.metric("Judge Avg", "N/A" if pd.isna(avg_judge) else f"{float(avg_judge):.1f}")
+                    st.metric("Judge Avg /20", "N/A" if pd.isna(avg_judge) else f"{float(avg_judge):.1f}")
                 with top_cols[3]:
-                    st.markdown("Reviewed" if reviewed else "Pending")
+                    badge_class = "review-status-reviewed" if reviewed else "review-status-pending"
+                    badge_label = "Reviewed" if reviewed else "Pending"
+                    st.markdown(
+                        f'<div class="review-status-badge {badge_class}">{badge_label}</div>',
+                        unsafe_allow_html=True,
+                    )
                     if st.button("Review", key=f"review_{submission_id}", use_container_width=True):
                         st.session_state["selected_review_submission_id"] = submission_id
                         st.rerun()
@@ -1176,24 +1516,34 @@ def render_judge_portal(judge_email: str) -> None:
         if st.button("Run AI evaluation for this project", use_container_width=True):
             with st.spinner("Running AI evaluation..."):
                 try:
+                    fallback_reason = ""
                     if selected.get("submission_url"):
-                        report = run_live_evaluation(
-                            selected["submission_url"],
-                            member_name=selected.get("project_name"),
-                        )
+                        try:
+                            report = run_live_evaluation(
+                                selected["submission_url"],
+                                member_name=selected.get("project_name"),
+                            )
+                        except Exception as exc:
+                            if not should_fallback_to_standard_evaluation(exc):
+                                raise
+                            fallback_reason = (
+                                "Prototype URL does not expose the required POST evaluation endpoints. "
+                                "Used the standard local benchmark instead."
+                            )
+                            report = run_standard_submission_evaluation(selected)
                     else:
-                        data = load_evaluation_data()
-                        evaluator = AIEvaluator()
-                        report = evaluator.run_evaluation(
-                            extraction_data=data.get("extraction_cases", [None])[0],
-                            retrieval_data=data.get("retrieval_cases", [None])[0],
-                            rag_data=data.get("rag_cases", [None])[0],
-                        )
+                        report = run_standard_submission_evaluation(selected)
+
+                    ai_summary = (
+                        f"{fallback_reason} " if fallback_reason else ""
+                    ) + f"AI evaluation completed with run ID {report.run_id}. Overall score: {report.overall_score:.1f}/100."
                     update_ai_result(
                         selected_id,
                         report.overall_score,
-                        f"AI evaluation completed with run ID {report.run_id}. Overall score: {report.overall_score:.1f}/100.",
+                        ai_summary,
                     )
+                    if fallback_reason:
+                        st.warning(fallback_reason)
                     st.success("AI evaluation saved.")
                     st.rerun()
                 except Exception as exc:
@@ -1201,13 +1551,21 @@ def render_judge_portal(judge_email: str) -> None:
 
     with score_col:
         st.markdown('<div class="section-header">Your Marks</div>', unsafe_allow_html=True)
+        st.caption("PIH Hackathon scorecard: five criteria, 1-4 points each, 20 points total.")
         current_score = load_my_score(selected_id, judge_email)
         with st.form("judge_score_form"):
-            accuracy = st.slider("Accuracy", 0.0, 10.0, float(current_score["accuracy"]), 0.5)
-            completeness = st.slider("Completeness", 0.0, 10.0, float(current_score["completeness"]), 0.5)
-            presentation = st.slider("Presentation", 0.0, 10.0, float(current_score["presentation"]), 0.5)
-            business_impact = st.slider("Business impact", 0.0, 10.0, float(current_score["business_impact"]), 0.5)
-            technical_quality = st.slider("Technical quality", 0.0, 10.0, float(current_score["technical_quality"]), 0.5)
+            score_values = {}
+            for field in PIH_SCORE_FIELDS:
+                score_values[field["storage_key"]] = st.slider(
+                    field["display"],
+                    1,
+                    4,
+                    coerce_pih_score(current_score[field["storage_key"]]),
+                    1,
+                    help=field["help"],
+                )
+            total_preview = pih_total_score(score_values)
+            st.metric("Total score", f"{total_preview:.0f}/20")
             comments = st.text_area("Comments", value=current_score.get("comments") or "", height=140)
             if st.form_submit_button("Save marks", use_container_width=True):
                 try:
@@ -1215,11 +1573,7 @@ def render_judge_portal(judge_email: str) -> None:
                         selected_id,
                         judge_email,
                         {
-                            "accuracy": accuracy,
-                            "completeness": completeness,
-                            "presentation": presentation,
-                            "business_impact": business_impact,
-                            "technical_quality": technical_quality,
+                            **score_values,
                             "comments": comments,
                         },
                     )
@@ -1234,7 +1588,7 @@ def render_judge_portal(judge_email: str) -> None:
             if scores_df.empty:
                 st.caption("No judge responses yet.")
             else:
-                st.dataframe(scores_df, use_container_width=True, hide_index=True)
+                st.dataframe(format_judge_scores_for_display(scores_df), use_container_width=True, hide_index=True)
         except Exception as exc:
             st.error(f"Could not load judge responses: {exc}")
 
