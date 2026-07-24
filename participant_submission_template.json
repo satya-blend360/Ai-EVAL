@@ -1,10 +1,5 @@
 {
   "instructions": "Participants submit completed test-set answers. Fill every answer field.",
-  "participant": {
-    "team_name": "",
-    "submitter_name": "",
-    "submitter_email": ""
-  },
   "answers": [
     {
       "question_number": 1,

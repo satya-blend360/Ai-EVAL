@@ -1297,7 +1297,7 @@ def render_public_submission() -> None:
         submission_json = st.text_area(
             "Or paste completed answer JSON",
             height=220,
-            placeholder='{\n  "participant": {\n    "team_name": "",\n    "submitter_name": "",\n    "submitter_email": ""\n  },\n  "answers": [\n    {\n      "question_number": 1,\n      "question": "...",\n      "answer": "..."\n    }\n  ]\n}',
+            placeholder='{\n  "answers": [\n    {\n      "question_number": 1,\n      "question": "...",\n      "answer": "..."\n    }\n  ]\n}',
             help="Paste the completed participant_submission_template.json content. Judges will see the comparison, not the full raw JSON.",
         )
 
