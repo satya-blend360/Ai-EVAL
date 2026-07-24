@@ -147,56 +147,104 @@ st.markdown("""
         bottom: 24px;
         z-index: 100000;
         width: auto;
-        max-width: min(560px, calc(100vw - 32px));
+        max-width: min(760px, calc(100vw - 24px));
         color: #e2e8f0;
         font-family: 'Inter', sans-serif;
     }
     .rubric-floating summary {
+        position: sticky;
+        top: 0;
+        z-index: 1;
         cursor: pointer;
         list-style: none;
         background: #0f172a;
         border: 1px solid rgba(20, 184, 166, 0.55);
         border-radius: 999px;
-        padding: 10px 16px;
+        padding: 12px 18px;
         color: #ccfbf1;
         font-weight: 800;
         box-shadow: 0 12px 28px rgba(2, 6, 23, 0.35);
+        text-align: center;
     }
     .rubric-floating summary::-webkit-details-marker {
         display: none;
     }
+    .rubric-floating summary::after {
+        content: "Open";
+        margin-left: 8px;
+        color: #94a3b8;
+        font-weight: 700;
+    }
     .rubric-floating[open] {
-        width: min(560px, calc(100vw - 32px));
-        max-height: 78vh;
+        width: min(760px, calc(100vw - 24px));
+        max-height: 86vh;
         overflow: auto;
         background: rgba(15, 23, 42, 0.98);
         border: 1px solid rgba(20, 184, 166, 0.55);
         border-radius: 12px;
-        padding: 14px;
+        padding: 16px;
         box-shadow: 0 24px 60px rgba(2, 6, 23, 0.5);
     }
     .rubric-floating[open] summary {
-        display: inline-block;
-        margin-bottom: 12px;
+        display: block;
+        margin: 0 0 14px;
         box-shadow: none;
+        background: #134e4a;
+        color: #f0fdfa;
+    }
+    .rubric-floating[open] summary::after {
+        content: "Click to close";
+        color: #ccfbf1;
     }
     .rubric-floating h3 {
         color: #f8fafc;
-        margin: 4px 0 8px;
-        font-size: 1rem;
+        margin: 4px 0 10px;
+        font-size: 1.15rem;
     }
     .rubric-floating p,
     .rubric-floating li {
-        font-size: 0.82rem;
-        line-height: 1.35;
-        margin: 4px 0;
+        font-size: 0.92rem;
+        line-height: 1.45;
+        margin: 6px 0;
     }
-    .rubric-floating ul {
-        padding-left: 18px;
-        margin: 6px 0 10px;
+    .rubric-intro {
+        background: rgba(30, 41, 59, 0.78);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+    .rubric-scale {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin: 10px 0 14px;
+    }
+    .rubric-scale div,
+    .rubric-criterion {
+        background: rgba(30, 41, 59, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        border-radius: 8px;
+        padding: 10px;
+    }
+    .rubric-criterion {
+        margin-bottom: 10px;
+    }
+    .rubric-criterion h4 {
+        margin: 0 0 8px;
+        color: #f8fafc;
+        font-size: 0.96rem;
+    }
+    .rubric-criterion p {
+        margin: 4px 0;
     }
     .rubric-floating strong {
         color: #99f6e4;
+    }
+    .rubric-reminder {
+        border-left: 4px solid #14b8a6;
+        padding-left: 10px;
+        margin-top: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -235,6 +283,7 @@ DB_CATALOG = get_secret("DATABRICKS_CATALOG", "sandbox")
 DB_SCHEMA = get_secret("DATABRICKS_SCHEMA", "ai_eval_judge_portal")
 MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
 MAX_SCREENSHOTS = 5
+MAX_SALES_BRIEF_BYTES = 10 * 1024 * 1024
 MAX_JSON_CHARS = 100_000
 MAX_TEXT_CHARS = 5_000
 
@@ -300,6 +349,15 @@ def is_url(value: str) -> bool:
     if not value:
         return True
     return re.fullmatch(r"https?://[^\s]+", value.strip(), flags=re.IGNORECASE) is not None
+
+
+def combine_description_with_source_link(description: str, source_code_url: str) -> str:
+    description = (description or "").strip()
+    source_code_url = (source_code_url or "").strip()
+    if not source_code_url:
+        return description
+    parts = [part for part in [description, f"Source code URL: {source_code_url}"] if part]
+    return "\n\n".join(parts)
 
 
 def db_configured() -> bool:
@@ -504,7 +562,12 @@ def pih_total_score(values: Dict[str, Any]) -> float:
 
 def render_hackathon_scoring_guide() -> None:
     criteria_items = "".join(
-        f"<li><strong>{field['display']}</strong>: {field['help']}</li>"
+        f"""
+        <div class="rubric-criterion">
+            <h4>{field['display']}</h4>
+            <p>{field['help']}</p>
+        </div>
+        """
         for field in PIH_SCORE_FIELDS
     )
     source_note = (
@@ -517,14 +580,21 @@ def render_hackathon_scoring_guide() -> None:
 <details class="rubric-floating">
     <summary>Scoring Guide</summary>
     <h3>PIH Hackathon Scorecard</h3>
-    <p><strong>Total:</strong> 20 points. Score each criterion from 1 to 4, then sum all five criteria.</p>
-    <p><strong>1</strong> Underachieving &nbsp; <strong>2</strong> Average &nbsp; <strong>3</strong> Proficient &nbsp; <strong>4</strong> Exceptional</p>
-    <ul>
-        {criteria_items}
-    </ul>
-    <p><strong>Video evidence to look for:</strong> grounded answers with source visible, quick accuracy tally, and a flag-guide-capture-persist loop for unanswered questions.</p>
-    <p><strong>Submission artifacts:</strong> demo video, test-set answers with sources where relevant, and one generated project one-pager / sales brief.</p>
-    <p>{source_note}</p>
+    <div class="rubric-intro">
+        <p><strong>Total:</strong> 20 points. Score each criterion from 1 to 4, then sum all five criteria.</p>
+        <div class="rubric-scale">
+            <div><strong>1</strong><br>Underachieving</div>
+            <div><strong>2</strong><br>Average</div>
+            <div><strong>3</strong><br>Proficient</div>
+            <div><strong>4</strong><br>Exceptional</div>
+        </div>
+    </div>
+    {criteria_items}
+    <div class="rubric-reminder">
+        <p><strong>Video evidence to look for:</strong> grounded answers with source visible, quick accuracy tally, and a flag-guide-capture-persist loop for unanswered questions.</p>
+        <p><strong>Submission artifacts:</strong> demo video, test-set answers with sources where relevant, and one generated project one-pager / sales brief.</p>
+        <p>{source_note}</p>
+    </div>
 </details>
         """,
         unsafe_allow_html=True,
@@ -1076,25 +1146,44 @@ def should_fallback_to_standard_evaluation(exc: Exception) -> bool:
     )
 
 
-def encode_screenshots(uploaded_files) -> str:
-    screenshots = []
+def encode_submission_files(screenshot_files, sales_brief_file=None) -> str:
+    files = []
     total_bytes = 0
-    if len(uploaded_files or []) > MAX_SCREENSHOTS:
+    if len(screenshot_files or []) > MAX_SCREENSHOTS:
         raise ValueError(f"Upload {MAX_SCREENSHOTS} screenshots or fewer.")
-    for uploaded_file in uploaded_files or []:
+    for uploaded_file in screenshot_files or []:
         content = uploaded_file.getvalue()
         total_bytes += len(content)
         if total_bytes > MAX_SCREENSHOT_BYTES:
             raise ValueError("Screenshot uploads must be 10 MB or less in total.")
-        screenshots.append(
+        files.append(
             {
                 "name": uploaded_file.name,
                 "mime_type": uploaded_file.type or "image/png",
                 "size_bytes": len(content),
                 "data_base64": base64.b64encode(content).decode("ascii"),
+                "category": "screenshot",
             }
         )
-    return json.dumps(screenshots)
+
+    if sales_brief_file is not None:
+        content = sales_brief_file.getvalue()
+        if len(content) > MAX_SALES_BRIEF_BYTES:
+            raise ValueError("Sales brief upload must be 10 MB or less.")
+        files.append(
+            {
+                "name": sales_brief_file.name,
+                "mime_type": sales_brief_file.type or "application/octet-stream",
+                "size_bytes": len(content),
+                "data_base64": base64.b64encode(content).decode("ascii"),
+                "category": "sales_brief",
+            }
+        )
+    return json.dumps(files)
+
+
+def encode_screenshots(uploaded_files) -> str:
+    return encode_submission_files(uploaded_files)
 
 
 def decode_screenshots(screenshots_json: str) -> List[Dict[str, Any]]:
@@ -1168,7 +1257,11 @@ def render_correctness_assessment(submission_json: str, stored_summary: str = ""
 
 
 def render_screenshots(screenshots_json: str) -> None:
-    screenshots = decode_screenshots(screenshots_json)
+    screenshots = [
+        item
+        for item in decode_screenshots(screenshots_json)
+        if item.get("category", "screenshot") == "screenshot"
+    ]
     if not screenshots:
         st.caption("No screenshots submitted.")
         return
@@ -1183,10 +1276,42 @@ def render_screenshots(screenshots_json: str) -> None:
         st.image(image_bytes, caption=name, use_container_width=True)
 
 
+def render_sales_brief_upload(screenshots_json: str) -> None:
+    sales_briefs = [
+        item
+        for item in decode_screenshots(screenshots_json)
+        if item.get("category") == "sales_brief"
+    ]
+    if not sales_briefs:
+        st.caption("No sales brief file submitted.")
+        return
+
+    for index, sales_brief in enumerate(sales_briefs):
+        name = sales_brief.get("name", "sales_brief")
+        mime_type = sales_brief.get("mime_type", "application/octet-stream")
+        encoded = sales_brief.get("data_base64", "")
+        try:
+            file_bytes = base64.b64decode(encoded)
+        except Exception:
+            st.caption(f"{name}: could not decode file data.")
+            continue
+
+        if mime_type.startswith("image/"):
+            st.image(file_bytes, caption=name, use_container_width=True)
+        st.download_button(
+            "Download sales brief",
+            data=file_bytes,
+            file_name=name,
+            mime=mime_type,
+            use_container_width=True,
+            key=f"sales_brief_download_{index}_{len(file_bytes)}",
+        )
+
+
 def render_public_submission() -> None:
     st.markdown('<div class="main-title">Project Submission</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="sub-title">Submit your project details, video, JSON output, and screenshots for judge review.</div>',
+        '<div class="sub-title">Submit your project details, video, JSON output, screenshots, and sales brief for judge review.</div>',
         unsafe_allow_html=True,
     )
     if not db_configured():
@@ -1203,11 +1328,17 @@ def render_public_submission() -> None:
             submitter_email = st.text_input("Your email")
             submission_url = st.text_input("Prototype or app URL (optional)")
         with c2:
+            source_code_url = st.text_input("GitHub / source code URL (optional)")
             video_url = st.text_input("Video URL", placeholder="OneDrive, YouTube, Loom, or direct video URL")
             screenshots = st.file_uploader(
                 "Screenshots",
                 type=["png", "jpg", "jpeg", "webp"],
                 accept_multiple_files=True,
+            )
+            sales_brief_file = st.file_uploader(
+                "Sales brief / one-pager (PDF, DOC, DOCX, or image)",
+                type=["pdf", "doc", "docx", "png", "jpg", "jpeg", "webp"],
+                accept_multiple_files=False,
             )
             description = st.text_area("Short project description", height=110)
         submission_json = st.text_area(
@@ -1234,6 +1365,8 @@ def render_public_submission() -> None:
         errors.append("Video URL must start with http:// or https://.")
     if submission_url.strip() and not is_url(submission_url):
         errors.append("Prototype/app URL must start with http:// or https://.")
+    if source_code_url.strip() and not is_url(source_code_url):
+        errors.append("GitHub/source code URL must start with http:// or https://.")
     if len(description) > MAX_TEXT_CHARS:
         errors.append(f"Description must be {MAX_TEXT_CHARS:,} characters or fewer.")
     if len(submission_json) > MAX_JSON_CHARS:
@@ -1249,7 +1382,7 @@ def render_public_submission() -> None:
         return
 
     try:
-        screenshots_json = encode_screenshots(screenshots)
+        screenshots_json = encode_submission_files(screenshots, sales_brief_file)
         create_submission(
             {
                 "project_name": project_name.strip(),
@@ -1257,7 +1390,7 @@ def render_public_submission() -> None:
                 "submitter_email": submitter_email.strip(),
                 "submission_url": submission_url.strip(),
                 "video_url": video_url.strip(),
-                "description": description.strip(),
+                "description": combine_description_with_source_link(description, source_code_url),
                 "submission_json": submission_json.strip(),
                 "screenshots_json": screenshots_json,
             }
@@ -1373,11 +1506,14 @@ def render_judge_portal(judge_email: str) -> None:
                 submitter_email = st.text_input("Submitter email")
             with c2:
                 submission_url = st.text_input("Prototype or submission URL (optional)")
+                source_code_url = st.text_input("GitHub / source code URL (optional)")
                 video_url = st.text_input("Video URL")
                 description = st.text_area("Short description", height=120)
             if st.form_submit_button("Save submission", use_container_width=True):
                 if not project_name.strip():
                     st.error("Team name is required. Use the exact team name shared by the organizers.")
+                elif source_code_url.strip() and not is_url(source_code_url):
+                    st.error("GitHub/source code URL must start with http:// or https://.")
                 else:
                     try:
                         create_submission(
@@ -1387,7 +1523,7 @@ def render_judge_portal(judge_email: str) -> None:
                                 "submitter_email": submitter_email.strip(),
                                 "submission_url": submission_url.strip(),
                                 "video_url": video_url.strip(),
-                                "description": description.strip(),
+                                "description": combine_description_with_source_link(description, source_code_url),
                             }
                         )
                         st.success("Submission saved.")
@@ -1501,6 +1637,9 @@ def render_judge_portal(judge_email: str) -> None:
             selected.get("correctness_summary") or "",
             selected.get("correctness_score"),
         )
+
+        st.markdown('<div class="section-header">Sales Brief / One-Pager</div>', unsafe_allow_html=True)
+        render_sales_brief_upload(selected.get("screenshots_json") or "")
 
         st.markdown('<div class="section-header">Screenshots</div>', unsafe_allow_html=True)
         render_screenshots(selected.get("screenshots_json") or "")
