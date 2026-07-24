@@ -18,13 +18,32 @@ from typing import List, Dict, Any, Optional
 # Setup pathing
 import sys
 APP_ROOT = os.path.abspath(os.path.dirname(__file__))
-sys.path.append(os.path.join(APP_ROOT, 'src'))
-sys.path.append(APP_ROOT)
+SRC_ROOT = os.path.join(APP_ROOT, "src")
+if SRC_ROOT not in sys.path:
+    sys.path.insert(0, SRC_ROOT)
+if APP_ROOT not in sys.path:
+    sys.path.insert(0, APP_ROOT)
 
-from ai_eval.core.evaluator import AIEvaluator
-from ai_eval.data.loader import load_evaluation_data
-from ai_eval.config import REPORTS_DIR, DEFAULT_WEIGHTS
-from evaluate_submission import run_live_evaluation
+REPORTS_DIR = Path(APP_ROOT) / "reports"
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def create_ai_evaluator():
+    from ai_eval.core.evaluator import AIEvaluator
+
+    return AIEvaluator()
+
+
+def load_evaluation_dataset():
+    from ai_eval.data.loader import load_evaluation_data
+
+    return load_evaluation_data()
+
+
+def run_live_prototype_evaluation(base_url: str, member_name: Optional[str] = None):
+    from evaluate_submission import run_live_evaluation
+
+    return run_live_evaluation(base_url, member_name=member_name)
 
 # Streamlit Page Configuration
 st.set_page_config(
@@ -1009,8 +1028,8 @@ def update_ai_result(submission_id: str, ai_score: float, ai_summary: str) -> No
 
 
 def run_standard_submission_evaluation(selected: Dict[str, Any]):
-    data = load_evaluation_data()
-    evaluator = AIEvaluator()
+    data = load_evaluation_dataset()
+    evaluator = create_ai_evaluator()
     project_name = normalize_text(selected.get("project_name"))
 
     if "horizon" in project_name:
@@ -1631,7 +1650,7 @@ def render_judge_portal(judge_email: str) -> None:
                     fallback_reason = ""
                     if selected.get("submission_url"):
                         try:
-                            report = run_live_evaluation(
+                            report = run_live_prototype_evaluation(
                                 selected["submission_url"],
                                 member_name=selected.get("project_name"),
                             )
@@ -1752,7 +1771,7 @@ st.sidebar.markdown("### ⚡ Trigger Assessment")
 if st.sidebar.button("Run New Pipeline Evaluation", use_container_width=True):
     with st.spinner("Executing evaluation pipeline..."):
         # Load sample data
-        data = load_evaluation_data()
+        data = load_evaluation_dataset()
         ext_case = data.get("extraction_cases", [None])[0]
         ret_case = data.get("retrieval_cases", [None])[0]
         rag_case = data.get("rag_cases", [None])[0]
@@ -1760,7 +1779,7 @@ if st.sidebar.button("Run New Pipeline Evaluation", use_container_width=True):
         sales_case = data.get("sales_brief_cases", [None])[0]
         judge_case = data.get("judge_cases", [None])[0]
         
-        evaluator = AIEvaluator()
+        evaluator = create_ai_evaluator()
         report = evaluator.run_evaluation(
             extraction_data=ext_case,
             retrieval_data=ret_case,
@@ -1796,7 +1815,7 @@ if st.sidebar.button("Evaluate Remote API", use_container_width=True):
     else:
         with st.spinner("Connecting to live prototype & evaluating endpoints..."):
             try:
-                report = run_live_evaluation(live_url, member_name=member_name)
+                report = run_live_prototype_evaluation(live_url, member_name=member_name)
                 st.toast(f"Live Evaluation {report.run_id} completed successfully!", icon="✅")
                 time.sleep(0.5)
                 st.rerun()
@@ -2177,7 +2196,7 @@ with tab_testbench:
                     "evidence_texts": contexts_list
                 }
                 
-                evaluator = AIEvaluator()
+                evaluator = create_ai_evaluator()
                 custom_report = evaluator.run_evaluation(
                     rag_data=rag_in,
                     hallucination_data=hal_in
