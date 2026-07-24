@@ -28,22 +28,43 @@ REPORTS_DIR = Path(APP_ROOT) / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def reset_ai_eval_import_cache() -> None:
+    import importlib
+
+    importlib.invalidate_caches()
+    for module_name in list(sys.modules):
+        if module_name == "ai_eval" or module_name.startswith("ai_eval."):
+            sys.modules.pop(module_name, None)
+
+
 def create_ai_evaluator():
+    reset_ai_eval_import_cache()
     from ai_eval.core.evaluator import AIEvaluator
 
     return AIEvaluator()
 
 
 def load_evaluation_dataset():
+    reset_ai_eval_import_cache()
     from ai_eval.data.loader import load_evaluation_data
 
     return load_evaluation_data()
 
 
 def run_live_prototype_evaluation(base_url: str, member_name: Optional[str] = None):
+    reset_ai_eval_import_cache()
+    sys.modules.pop("evaluate_submission", None)
     from evaluate_submission import run_live_evaluation
 
     return run_live_evaluation(base_url, member_name=member_name)
+
+
+def show_optional_evaluator_error(exc: Exception) -> None:
+    st.error(
+        "The optional AI evaluation module could not load in this environment. "
+        "The submission and judge portal pages are still available."
+    )
+    st.caption(f"Evaluator error: {type(exc).__name__}: {exc}")
 
 # Streamlit Page Configuration
 st.set_page_config(
@@ -1678,7 +1699,7 @@ def render_judge_portal(judge_email: str) -> None:
                     st.success("AI evaluation saved.")
                     st.rerun()
                 except Exception as exc:
-                    st.error(f"AI evaluation failed: {exc}")
+                    show_optional_evaluator_error(exc)
 
     with score_col:
         st.markdown('<div class="section-header">Your Marks</div>', unsafe_allow_html=True)
@@ -1770,39 +1791,42 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### ⚡ Trigger Assessment")
 if st.sidebar.button("Run New Pipeline Evaluation", use_container_width=True):
     with st.spinner("Executing evaluation pipeline..."):
-        # Load sample data
-        data = load_evaluation_dataset()
-        ext_case = data.get("extraction_cases", [None])[0]
-        ret_case = data.get("retrieval_cases", [None])[0]
-        rag_case = data.get("rag_cases", [None])[0]
-        hal_case = data.get("hallucination_cases", [None])[0]
-        sales_case = data.get("sales_brief_cases", [None])[0]
-        judge_case = data.get("judge_cases", [None])[0]
-        
-        evaluator = create_ai_evaluator()
-        report = evaluator.run_evaluation(
-            extraction_data=ext_case,
-            retrieval_data=ret_case,
-            rag_data=rag_case,
-            hallucination_data={
-                "generated_answer": hal_case.get("generated_answer") if hal_case else "",
-                "evidence_texts": hal_case.get("evidence_texts") if hal_case else []
-            } if hal_case else None,
-            sales_brief_data=sales_case,
-            judge_data=judge_case
-        )
-        # Save the report to disk so it appears in the dropdown list
-        output_path = REPORTS_DIR / f"report_{report.run_id}.json"
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(report.model_dump(), f, indent=2)
-        sample_path = REPORTS_DIR / "sample_report.json"
-        with open(sample_path, "w", encoding="utf-8") as f:
-            json.dump(report.model_dump(), f, indent=2)
-            
-        # Force reload
-        st.toast(f"Evaluation {report.run_id} completed successfully!", icon="✅")
-        time.sleep(0.5)
-        st.rerun()
+        try:
+            # Load sample data
+            data = load_evaluation_dataset()
+            ext_case = data.get("extraction_cases", [None])[0]
+            ret_case = data.get("retrieval_cases", [None])[0]
+            rag_case = data.get("rag_cases", [None])[0]
+            hal_case = data.get("hallucination_cases", [None])[0]
+            sales_case = data.get("sales_brief_cases", [None])[0]
+            judge_case = data.get("judge_cases", [None])[0]
+
+            evaluator = create_ai_evaluator()
+            report = evaluator.run_evaluation(
+                extraction_data=ext_case,
+                retrieval_data=ret_case,
+                rag_data=rag_case,
+                hallucination_data={
+                    "generated_answer": hal_case.get("generated_answer") if hal_case else "",
+                    "evidence_texts": hal_case.get("evidence_texts") if hal_case else []
+                } if hal_case else None,
+                sales_brief_data=sales_case,
+                judge_data=judge_case
+            )
+            # Save the report to disk so it appears in the dropdown list
+            output_path = REPORTS_DIR / f"report_{report.run_id}.json"
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(report.model_dump(), f, indent=2)
+            sample_path = REPORTS_DIR / "sample_report.json"
+            with open(sample_path, "w", encoding="utf-8") as f:
+                json.dump(report.model_dump(), f, indent=2)
+
+            # Force reload
+            st.toast(f"Evaluation {report.run_id} completed successfully!", icon="✅")
+            time.sleep(0.5)
+            st.rerun()
+        except Exception as exc:
+            show_optional_evaluator_error(exc)
 
 # Live Submission Evaluation Button in Sidebar
 st.sidebar.markdown("---")
@@ -2181,36 +2205,39 @@ with tab_testbench:
         
         if submit_btn:
             with st.spinner("Executing custom evaluator..."):
-                contexts_list = [c.strip() for c in play_contexts.split("\n") if c.strip()]
-                
-                # Assemble request
-                rag_in = {
-                    "query": play_query,
-                    "contexts": contexts_list,
-                    "generated_answer": play_answer,
-                    "ground_truth_answer": play_ground_truth
-                }
-                
-                hal_in = {
-                    "generated_answer": play_answer,
-                    "evidence_texts": contexts_list
-                }
-                
-                evaluator = create_ai_evaluator()
-                custom_report = evaluator.run_evaluation(
-                    rag_data=rag_in,
-                    hallucination_data=hal_in
-                )
-                
-                st.success("Custom evaluation run complete!")
-                
-                st.markdown("### Resulting Metrics")
-                res_col1, res_col2 = st.columns(2)
-                with res_col1:
-                    st.write(f"**Overall Score:** {custom_report.overall_score:.2f}")
-                    st.write(f"**RAG Faithfulness:** {custom_report.rag.faithfulness if custom_report.rag else 0.0}")
-                    st.write(f"**RAG Answer Relevancy:** {custom_report.rag.answer_relevancy if custom_report.rag else 0.0}")
-                with res_col2:
-                    st.write(f"**Hallucination Rate:** {custom_report.hallucination.hallucination_rate if custom_report.hallucination else 0.0}%")
-                    st.write(f"**Latency:** {custom_report.performance.latency_ms:.1f} ms")
-                    st.write(f"**Cost:** ${custom_report.performance.cost_usd:.5f}")
+                try:
+                    contexts_list = [c.strip() for c in play_contexts.split("\n") if c.strip()]
+
+                    # Assemble request
+                    rag_in = {
+                        "query": play_query,
+                        "contexts": contexts_list,
+                        "generated_answer": play_answer,
+                        "ground_truth_answer": play_ground_truth
+                    }
+
+                    hal_in = {
+                        "generated_answer": play_answer,
+                        "evidence_texts": contexts_list
+                    }
+
+                    evaluator = create_ai_evaluator()
+                    custom_report = evaluator.run_evaluation(
+                        rag_data=rag_in,
+                        hallucination_data=hal_in
+                    )
+
+                    st.success("Custom evaluation run complete!")
+
+                    st.markdown("### Resulting Metrics")
+                    res_col1, res_col2 = st.columns(2)
+                    with res_col1:
+                        st.write(f"**Overall Score:** {custom_report.overall_score:.2f}")
+                        st.write(f"**RAG Faithfulness:** {custom_report.rag.faithfulness if custom_report.rag else 0.0}")
+                        st.write(f"**RAG Answer Relevancy:** {custom_report.rag.answer_relevancy if custom_report.rag else 0.0}")
+                    with res_col2:
+                        st.write(f"**Hallucination Rate:** {custom_report.hallucination.hallucination_rate if custom_report.hallucination else 0.0}%")
+                        st.write(f"**Latency:** {custom_report.performance.latency_ms:.1f} ms")
+                        st.write(f"**Cost:** ${custom_report.performance.cost_usd:.5f}")
+                except Exception as exc:
+                    show_optional_evaluator_error(exc)
