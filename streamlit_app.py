@@ -558,6 +558,47 @@ def normalize_text(value: Any) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
+def normalize_submission_team_name(value: Any) -> str:
+    text = normalize_text(value)
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def dedupe_submissions_by_team(submissions: pd.DataFrame) -> pd.DataFrame:
+    if submissions.empty or "project_name" not in submissions.columns:
+        return submissions
+
+    df = submissions.copy()
+    df["_original_order"] = range(len(df))
+    df["_team_key"] = df["project_name"].map(normalize_submission_team_name)
+    df["_dedupe_key"] = df["_team_key"]
+    missing_team = df["_dedupe_key"].eq("")
+    if "submission_id" in df.columns:
+        df.loc[missing_team, "_dedupe_key"] = df.loc[missing_team, "submission_id"].astype(str)
+    else:
+        df.loc[missing_team, "_dedupe_key"] = df.loc[missing_team, "_original_order"].astype(str)
+
+    if "created_at" in df.columns:
+        df["_created_sort"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    else:
+        df["_created_sort"] = pd.NaT
+    df["_missing_created"] = df["_created_sort"].isna()
+
+    first_rows = (
+        df.sort_values(
+            ["_dedupe_key", "_missing_created", "_created_sort", "_original_order"],
+            kind="stable",
+        )
+        .drop_duplicates("_dedupe_key", keep="first")["_original_order"]
+    )
+
+    return (
+        df[df["_original_order"].isin(set(first_rows))]
+        .sort_values("_original_order", kind="stable")
+        .drop(columns=["_original_order", "_team_key", "_dedupe_key", "_created_sort", "_missing_created"])
+        .reset_index(drop=True)
+    )
+
+
 def load_correct_answer_key() -> List[Dict[str, Any]]:
     if not JUDGE_READY_QUESTIONS_PATH.exists():
         return []
@@ -853,7 +894,7 @@ def local_submissions() -> pd.DataFrame:
         row["judge_count"] = len(row_scores)
         row["avg_judge_score"] = sum(row_scores) / len(row_scores) if row_scores else None
         row["last_judged_at"] = ""
-    return pd.DataFrame(rows)
+    return dedupe_submissions_by_team(pd.DataFrame(rows))
 
 
 @st.cache_data(ttl=5)
@@ -894,7 +935,21 @@ def load_submissions() -> pd.DataFrame:
         ) j ON s.submission_id = j.submission_id
         ORDER BY s.created_at DESC
     """
-    return run_db_query(query, fetch=True)
+    return dedupe_submissions_by_team(run_db_query(query, fetch=True))
+
+
+def submission_team_exists(project_name: str) -> bool:
+    team_key = normalize_submission_team_name(project_name)
+    if not team_key:
+        return False
+
+    load_submissions.clear()
+    existing = load_submissions()
+    if existing.empty or "project_name" not in existing.columns:
+        return False
+
+    existing_keys = existing["project_name"].map(normalize_submission_team_name)
+    return team_key in set(existing_keys)
 
 
 def load_scores(submission_id: str) -> pd.DataFrame:
@@ -1062,7 +1117,11 @@ def save_judge_score(submission_id: str, judge_email: str, values: Dict[str, Any
 
 
 def create_submission(values: Dict[str, Any]) -> None:
+    if submission_team_exists(values["project_name"]):
+        raise ValueError("This team already has a submission. The first submission is used for judging.")
+
     correctness = score_submission_against_key(values.get("submission_json", ""))
+    now = datetime.now().isoformat(timespec="seconds")
     submission = {
         "submission_id": f"sub_{uuid.uuid4().hex[:12]}",
         "project_name": values["project_name"],
@@ -1076,6 +1135,8 @@ def create_submission(values: Dict[str, Any]) -> None:
         "correctness_score": correctness["score"],
         "correctness_summary": correctness["summary"],
         "screenshots_json": values.get("screenshots_json", "[]"),
+        "created_at": now,
+        "updated_at": now,
     }
     if not db_configured():
         st.session_state.setdefault("local_extra_submissions", []).append(submission)
@@ -1649,6 +1710,12 @@ def render_judge_portal(judge_email: str) -> None:
         my_reviews = load_my_review_summary(judge_email)
     except Exception:
         my_reviews = pd.DataFrame(columns=["submission_id", "total_score", "updated_at"])
+
+    visible_submission_ids = set(
+        submissions.get("submission_id", pd.Series(dtype=str)).dropna().astype(str).tolist()
+    )
+    if not my_reviews.empty and "submission_id" in my_reviews.columns:
+        my_reviews = my_reviews[my_reviews["submission_id"].astype(str).isin(visible_submission_ids)]
 
     reviewed_ids = set(my_reviews.get("submission_id", pd.Series(dtype=str)).dropna().astype(str).tolist())
     my_score_by_submission = {}
