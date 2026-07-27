@@ -1667,43 +1667,6 @@ def render_judge_portal(judge_email: str) -> None:
     kpi3.metric("Pending", pending_submissions)
     kpi4.metric("Avg AI Score", "N/A" if pd.isna(avg_ai) else f"{avg_ai:.1f}")
 
-    with st.expander("Add project submission", expanded=False):
-        with st.form("new_submission_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                project_name = st.text_input(
-                    "Team name",
-                    help="Use the exact team name shared by the organizers.",
-                )
-                submitter_name = st.text_input("Submitter name")
-                submitter_email = st.text_input("Submitter email")
-            with c2:
-                submission_url = st.text_input("Prototype or submission URL (optional)")
-                source_code_url = st.text_input("GitHub / source code URL (optional)")
-                video_url = st.text_input("Video URL")
-                description = st.text_area("Short description", height=120)
-            if st.form_submit_button("Save submission", use_container_width=True):
-                if not project_name.strip():
-                    st.error("Team name is required. Use the exact team name shared by the organizers.")
-                elif source_code_url.strip() and not is_url(source_code_url):
-                    st.error("GitHub/source code URL must start with http:// or https://.")
-                else:
-                    try:
-                        create_submission(
-                            {
-                                "project_name": project_name.strip(),
-                                "submitter_name": submitter_name.strip(),
-                                "submitter_email": submitter_email.strip(),
-                                "submission_url": submission_url.strip(),
-                                "video_url": video_url.strip(),
-                                "description": combine_description_with_source_link(description, source_code_url),
-                            }
-                        )
-                        st.success("Submission saved.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Could not save submission: {exc}")
-
     if submissions.empty:
         st.info("No project submissions are available yet.")
         return
@@ -2401,3 +2364,4 @@ with tab_testbench:
                         st.write(f"**Cost:** ${custom_report.performance.cost_usd:.5f}")
                 except Exception as exc:
                     show_optional_evaluator_error(exc)
+
