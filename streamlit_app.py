@@ -4,6 +4,10 @@ import time
 import re
 import uuid
 import base64
+import html
+import zipfile
+import xml.etree.ElementTree as ET
+from io import BytesIO
 from urllib import error, request
 import pandas as pd
 import numpy as np
@@ -1423,6 +1427,66 @@ def render_screenshots(screenshots_json: str) -> None:
         st.image(image_bytes, caption=name, use_container_width=True)
 
 
+def extract_docx_text(file_bytes: bytes) -> str:
+    try:
+        with zipfile.ZipFile(BytesIO(file_bytes)) as docx:
+            document_xml = docx.read("word/document.xml")
+    except Exception:
+        return ""
+
+    try:
+        root = ET.fromstring(document_xml)
+    except Exception:
+        return ""
+
+    paragraphs = []
+    for paragraph in root.iter():
+        if not paragraph.tag.endswith("}p"):
+            continue
+        text_parts = [
+            node.text
+            for node in paragraph.iter()
+            if node.tag.endswith("}t") and node.text
+        ]
+        paragraph_text = "".join(text_parts).strip()
+        if paragraph_text:
+            paragraphs.append(paragraph_text)
+
+    return "\n\n".join(paragraphs)
+
+
+def render_pdf_preview(file_bytes: bytes, name: str) -> None:
+    pdf_base64 = base64.b64encode(file_bytes).decode("ascii")
+    title = html.escape(f"Sales brief preview: {name}", quote=True)
+    components.html(
+        f"""
+        <iframe
+            title="{title}"
+            src="data:application/pdf;base64,{pdf_base64}"
+            style="width: 100%; height: 720px; border: 1px solid #d9dee7; border-radius: 8px;"
+        ></iframe>
+        """,
+        height=740,
+        scrolling=False,
+    )
+
+
+def render_docx_preview(file_bytes: bytes, name: str) -> None:
+    preview_text = extract_docx_text(file_bytes)
+    if not preview_text:
+        st.warning(f"{name}: DOCX preview could not be generated.")
+        return
+
+    st.text_area(
+        "Sales brief preview",
+        value=preview_text,
+        height=560,
+        disabled=True,
+        label_visibility="collapsed",
+        key=f"sales_brief_docx_preview_{name}_{len(file_bytes)}",
+    )
+
+
 def render_sales_brief_upload(screenshots_json: str) -> None:
     sales_briefs = [
         item
@@ -1443,16 +1507,31 @@ def render_sales_brief_upload(screenshots_json: str) -> None:
             st.caption(f"{name}: could not decode file data.")
             continue
 
-        if mime_type.startswith("image/"):
+        file_suffix = Path(name).suffix.lower()
+        image_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
+        if mime_type.startswith("image/") or file_suffix in image_suffixes:
             st.image(file_bytes, caption=name, use_container_width=True)
-        st.download_button(
-            "Download sales brief",
-            data=file_bytes,
-            file_name=name,
-            mime=mime_type,
-            use_container_width=True,
-            key=f"sales_brief_download_{index}_{len(file_bytes)}",
-        )
+        elif mime_type == "application/pdf" or file_suffix == ".pdf":
+            st.caption(name)
+            render_pdf_preview(file_bytes, name)
+        elif (
+            mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            or file_suffix == ".docx"
+        ):
+            st.caption(name)
+            render_docx_preview(file_bytes, name)
+        elif mime_type.startswith("text/") or file_suffix in {".md", ".txt"}:
+            st.caption(name)
+            st.text_area(
+                "Sales brief preview",
+                value=file_bytes.decode("utf-8", errors="replace"),
+                height=560,
+                disabled=True,
+                label_visibility="collapsed",
+                key=f"sales_brief_text_preview_{index}_{len(file_bytes)}",
+            )
+        else:
+            st.warning(f"{name}: this file type cannot be previewed in the judge portal.")
 
 
 def render_public_submission() -> None:
@@ -1509,10 +1588,10 @@ def render_public_submission() -> None:
         with brief_col:
             sales_brief_file = st.file_uploader(
                 f"Sales brief / one-pager * (max {format_file_size(MAX_SALES_BRIEF_BYTES)})",
-                type=["pdf", "doc", "docx", "png", "jpg", "jpeg", "webp"],
+                type=["pdf", "docx", "png", "jpg", "jpeg", "webp"],
                 accept_multiple_files=False,
                 help=(
-                    "Submit the generated sales brief as PDF, DOC, DOCX, or image. "
+                    "Submit the generated sales brief as PDF, DOCX, or image so judges can view it in the portal. "
                     f"Keep it {format_file_size(MAX_SALES_BRIEF_BYTES)} or less."
                 ),
             )
