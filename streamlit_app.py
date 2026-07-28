@@ -233,6 +233,7 @@ def get_secret(name: str, default: str = "") -> str:
 
 PORTAL_PASSWORD = get_secret("JUDGE_PORTAL_PASSWORD", "123")
 COMPANY_DOMAIN = "blend360.com"
+ADMIN_JUDGE_EMAIL = "saisrisatya.padala@blend360.com"
 DB_CATALOG = get_secret("DATABRICKS_CATALOG", "sandbox")
 DB_SCHEMA = get_secret("DATABRICKS_SCHEMA", "ai_eval_judge_portal")
 MAX_SCREENSHOTS = 5
@@ -295,6 +296,10 @@ PIH_SCORE_MAX = len(PIH_SCORE_FIELDS) * 4
 
 def is_company_email(email: str) -> bool:
     return email.strip().lower().endswith(f"@{COMPANY_DOMAIN}")
+
+
+def is_admin_email(email: str) -> bool:
+    return email.strip().lower() == ADMIN_JUDGE_EMAIL
 
 
 def is_email(value: str) -> bool:
@@ -1007,6 +1012,322 @@ def load_my_review_summary(judge_email: str) -> pd.DataFrame:
     )
 
 
+def ensure_judge_login_table() -> None:
+    if st.session_state.get("judge_login_table_ready"):
+        return
+    run_db_query(
+        f"""
+        CREATE TABLE IF NOT EXISTS {DB_PREFIX}.judge_logins (
+            judge_email STRING,
+            login_count BIGINT,
+            first_login_at TIMESTAMP,
+            last_login_at TIMESTAMP
+        )
+        USING DELTA
+        """
+    )
+    st.session_state["judge_login_table_ready"] = True
+
+
+def record_judge_login(judge_email: str) -> None:
+    normalized_email = judge_email.strip().lower()
+    if not normalized_email:
+        return
+
+    if not db_configured():
+        now = datetime.now().isoformat(timespec="seconds")
+        logins = st.session_state.setdefault("local_judge_logins", {})
+        current = logins.get(
+            normalized_email,
+            {
+                "judge_email": normalized_email,
+                "login_count": 0,
+                "first_login_at": now,
+                "last_login_at": now,
+            },
+        )
+        current["login_count"] = int(current.get("login_count") or 0) + 1
+        current["last_login_at"] = now
+        logins[normalized_email] = current
+        return
+
+    ensure_judge_login_table()
+    run_db_query(
+        f"""
+        MERGE INTO {DB_PREFIX}.judge_logins AS t
+        USING (
+            SELECT lower(:judge_email) AS judge_email
+        ) AS s
+        ON lower(t.judge_email) = s.judge_email
+        WHEN MATCHED THEN UPDATE SET
+            login_count = COALESCE(t.login_count, 0) + 1,
+            last_login_at = current_timestamp()
+        WHEN NOT MATCHED THEN INSERT (
+            judge_email,
+            login_count,
+            first_login_at,
+            last_login_at
+        ) VALUES (
+            s.judge_email,
+            1,
+            current_timestamp(),
+            current_timestamp()
+        )
+        """,
+        {"judge_email": normalized_email},
+    )
+
+
+def empty_score_details() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "judge_email",
+            "submission_id",
+            "project_name",
+            "submitter_name",
+            "accuracy",
+            "completeness",
+            "presentation",
+            "business_impact",
+            "technical_quality",
+            "total_score",
+            "comments",
+            "updated_at",
+        ]
+    )
+
+
+@st.cache_data(ttl=5)
+def load_all_judge_scores() -> pd.DataFrame:
+    if not db_configured():
+        scores = pd.DataFrame(list(st.session_state.setdefault("local_judge_scores", {}).values()))
+        if scores.empty:
+            return empty_score_details()
+
+        submissions = local_submissions()
+        submission_columns = [
+            column
+            for column in ["submission_id", "project_name", "submitter_name"]
+            if column in submissions.columns
+        ]
+        if submission_columns:
+            scores = scores.merge(
+                submissions[submission_columns].drop_duplicates("submission_id"),
+                on="submission_id",
+                how="left",
+            )
+        for column in empty_score_details().columns:
+            if column not in scores.columns:
+                scores[column] = None
+        return scores[empty_score_details().columns]
+
+    return run_db_query(
+        f"""
+        SELECT
+            j.judge_email,
+            j.submission_id,
+            s.project_name,
+            s.submitter_name,
+            j.accuracy,
+            j.completeness,
+            j.presentation,
+            j.business_impact,
+            j.technical_quality,
+            j.total_score,
+            j.comments,
+            j.updated_at
+        FROM {DB_PREFIX}.judge_scores j
+        LEFT JOIN {DB_PREFIX}.submissions s ON j.submission_id = s.submission_id
+        ORDER BY j.updated_at DESC
+        """,
+        fetch=True,
+    )
+
+
+def load_login_activity() -> pd.DataFrame:
+    if not db_configured():
+        return pd.DataFrame(list(st.session_state.setdefault("local_judge_logins", {}).values()))
+
+    ensure_judge_login_table()
+    return run_db_query(
+        f"""
+        SELECT
+            lower(judge_email) AS judge_email,
+            SUM(COALESCE(login_count, 0)) AS login_count,
+            MIN(first_login_at) AS first_login_at,
+            MAX(last_login_at) AS last_login_at
+        FROM {DB_PREFIX}.judge_logins
+        GROUP BY lower(judge_email)
+        """,
+        fetch=True,
+    )
+
+
+def build_judge_activity_table(scores: pd.DataFrame, total_submissions: int) -> pd.DataFrame:
+    try:
+        logins = load_login_activity()
+    except Exception:
+        logins = pd.DataFrame(columns=["judge_email", "login_count", "first_login_at", "last_login_at"])
+
+    if logins.empty:
+        login_summary = pd.DataFrame(columns=["judge_email", "login_count", "first_login_at", "last_login_at"])
+    else:
+        login_summary = logins.copy()
+        login_summary["judge_email"] = login_summary["judge_email"].fillna("").astype(str).str.strip().str.lower()
+        login_summary["login_count"] = pd.to_numeric(login_summary.get("login_count"), errors="coerce").fillna(0).astype(int)
+
+    if scores.empty or "judge_email" not in scores.columns:
+        score_summary = pd.DataFrame(
+            columns=["judge_email", "reviews_completed", "total_score_awarded", "avg_score", "last_review_at"]
+        )
+    else:
+        score_rows = scores.copy()
+        score_rows["judge_email"] = score_rows["judge_email"].fillna("").astype(str).str.strip().str.lower()
+        score_rows["total_score"] = pd.to_numeric(score_rows.get("total_score"), errors="coerce")
+        score_summary = (
+            score_rows[score_rows["judge_email"] != ""]
+            .groupby("judge_email", as_index=False)
+            .agg(
+                reviews_completed=("submission_id", "nunique"),
+                total_score_awarded=("total_score", "sum"),
+                avg_score=("total_score", "mean"),
+                last_review_at=("updated_at", "max"),
+            )
+        )
+
+    if login_summary.empty:
+        activity = score_summary.copy()
+        activity["login_count"] = 0
+        activity["first_login_at"] = ""
+        activity["last_login_at"] = ""
+    elif score_summary.empty:
+        activity = login_summary.copy()
+        activity["reviews_completed"] = 0
+        activity["total_score_awarded"] = 0.0
+        activity["avg_score"] = np.nan
+        activity["last_review_at"] = ""
+    else:
+        activity = login_summary.merge(score_summary, on="judge_email", how="outer")
+
+    if activity.empty:
+        return pd.DataFrame(
+            columns=[
+                "Judge",
+                "Logged In",
+                "Login Count",
+                "Reviews Completed",
+                "Completion %",
+                "Total Score Awarded",
+                "Avg Score /20",
+                "First Login",
+                "Last Login",
+                "Last Review",
+            ]
+        )
+
+    activity["judge_email"] = activity["judge_email"].fillna("").astype(str)
+    activity["login_count"] = pd.to_numeric(activity.get("login_count"), errors="coerce").fillna(0).astype(int)
+    activity["reviews_completed"] = pd.to_numeric(activity.get("reviews_completed"), errors="coerce").fillna(0).astype(int)
+    activity["total_score_awarded"] = pd.to_numeric(activity.get("total_score_awarded"), errors="coerce").fillna(0.0)
+    activity["avg_score"] = pd.to_numeric(activity.get("avg_score"), errors="coerce")
+    activity["completion_pct"] = (
+        activity["reviews_completed"] / total_submissions * 100.0 if total_submissions else 0.0
+    )
+    activity["logged_in"] = activity["login_count"] > 0
+    activity = activity.sort_values(
+        ["reviews_completed", "avg_score", "judge_email"],
+        ascending=[False, False, True],
+        na_position="last",
+    )
+    return activity.rename(
+        columns={
+            "judge_email": "Judge",
+            "logged_in": "Logged In",
+            "login_count": "Login Count",
+            "reviews_completed": "Reviews Completed",
+            "completion_pct": "Completion %",
+            "total_score_awarded": "Total Score Awarded",
+            "avg_score": "Avg Score /20",
+            "first_login_at": "First Login",
+            "last_login_at": "Last Login",
+            "last_review_at": "Last Review",
+        }
+    )[
+        [
+            "Judge",
+            "Logged In",
+            "Login Count",
+            "Reviews Completed",
+            "Completion %",
+            "Total Score Awarded",
+            "Avg Score /20",
+            "First Login",
+            "Last Login",
+            "Last Review",
+        ]
+    ]
+
+
+def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "Member / Team",
+        "Submitter",
+        "Reviews Completed",
+        "Total Score",
+        "Avg Score /20",
+        "Last Review",
+    ]
+    if submissions.empty:
+        return pd.DataFrame(columns=columns)
+
+    base_columns = [
+        column
+        for column in ["submission_id", "project_name", "submitter_name"]
+        if column in submissions.columns
+    ]
+    projects = submissions[base_columns].copy()
+
+    if scores.empty:
+        projects["Reviews Completed"] = 0
+        projects["Total Score"] = np.nan
+        projects["Avg Score /20"] = np.nan
+        projects["Last Review"] = ""
+    else:
+        score_rows = scores.copy()
+        score_rows["total_score"] = pd.to_numeric(score_rows.get("total_score"), errors="coerce")
+        score_summary = (
+            score_rows.groupby("submission_id", as_index=False)
+            .agg(
+                Reviews_Completed=("judge_email", "nunique"),
+                Total_Score=("total_score", "sum"),
+                Avg_Score=("total_score", "mean"),
+                Last_Review=("updated_at", "max"),
+            )
+            .rename(
+                columns={
+                    "Reviews_Completed": "Reviews Completed",
+                    "Total_Score": "Total Score",
+                    "Avg_Score": "Avg Score /20",
+                    "Last_Review": "Last Review",
+                }
+            )
+        )
+        projects = projects.merge(score_summary, on="submission_id", how="left")
+
+    projects["Reviews Completed"] = pd.to_numeric(projects.get("Reviews Completed"), errors="coerce").fillna(0).astype(int)
+    projects["Total Score"] = pd.to_numeric(projects.get("Total Score"), errors="coerce")
+    projects["Avg Score /20"] = pd.to_numeric(projects.get("Avg Score /20"), errors="coerce")
+    projects["Member / Team"] = projects.get("project_name", pd.Series(dtype=str)).fillna("Untitled project")
+    projects["Submitter"] = projects.get("submitter_name", pd.Series(dtype=str)).fillna("Unknown submitter")
+    projects["Last Review"] = projects.get("Last Review", pd.Series(dtype=str)).fillna("")
+    projects = projects.sort_values(
+        ["Avg Score /20", "Total Score", "Reviews Completed", "Member / Team"],
+        ascending=[False, False, False, True],
+        na_position="last",
+    )
+    return projects[columns]
+
+
 def load_my_score(submission_id: str, judge_email: str) -> Dict[str, Any]:
     defaults = {
         "accuracy": 3,
@@ -1058,10 +1379,12 @@ def save_judge_score(submission_id: str, judge_email: str, values: Dict[str, Any
         "comments": values.get("comments", ""),
     }
     if not db_configured():
+        score["updated_at"] = datetime.now().isoformat(timespec="seconds")
         st.session_state.setdefault("local_judge_scores", {})[
             f"{submission_id}:{judge_email}"
         ] = score
         load_submissions.clear()
+        load_all_judge_scores.clear()
         return
     run_db_query(
         f"""
@@ -1118,6 +1441,7 @@ def save_judge_score(submission_id: str, judge_email: str, values: Dict[str, Any
         score,
     )
     load_submissions.clear()
+    load_all_judge_scores.clear()
 
 
 def create_submission(values: Dict[str, Any]) -> None:
@@ -1750,6 +2074,208 @@ def show_video_or_link(video_url: str) -> None:
         st.caption("Video preview could not be embedded. Use the link above.")
 
 
+def format_optional_number(value: Any, suffix: str = "", decimals: int = 1) -> str:
+    try:
+        if pd.isna(value):
+            return "N/A"
+        return f"{float(value):.{decimals}f}{suffix}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def render_admin_dashboard(judge_email: str) -> None:
+    if not is_admin_email(judge_email):
+        st.error("Admin dashboard access is restricted.")
+        return
+
+    st.markdown('<div class="main-title">Admin Dashboard</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="sub-title">Monitor judge logins, review completion, project rankings, and all saved scorecards.</div>',
+        unsafe_allow_html=True,
+    )
+
+    render_starter_warehouse_sidebar()
+    if st.sidebar.button("Refresh admin data", use_container_width=True):
+        load_submissions.clear()
+        load_all_judge_scores.clear()
+        st.rerun()
+
+    auto_refresh = st.sidebar.toggle("Auto-refresh admin", value=False)
+    if auto_refresh:
+        try:
+            from streamlit_autorefresh import st_autorefresh
+
+            st_autorefresh(interval=30000, key="admin_dashboard_autorefresh")
+        except Exception:
+            st.sidebar.caption("Auto-refresh package is unavailable in this environment.")
+
+    if not db_configured():
+        st.warning("Databricks secrets are not configured. Admin data is limited to this Streamlit session.")
+
+    login_tracking_error = st.session_state.get("login_tracking_error")
+    if login_tracking_error:
+        st.warning(f"Judge login tracking could not be saved: {login_tracking_error}")
+
+    try:
+        submissions = load_submissions()
+    except Exception as exc:
+        st.error(f"Could not load submissions from Databricks: {exc}")
+        submissions = local_submissions()
+
+    try:
+        scores = load_all_judge_scores()
+    except Exception as exc:
+        st.error(f"Could not load judge scores: {exc}")
+        scores = empty_score_details()
+
+    project_scores = build_project_score_table(submissions, scores)
+    judge_activity = build_judge_activity_table(scores, len(submissions))
+
+    total_submissions = len(submissions)
+    total_judges = len(judge_activity)
+    logged_in_judges = (
+        int((pd.to_numeric(judge_activity["Login Count"], errors="coerce").fillna(0) > 0).sum())
+        if not judge_activity.empty and "Login Count" in judge_activity.columns
+        else 0
+    )
+    completed_reviews = (
+        int(judge_activity["Reviews Completed"].sum())
+        if not judge_activity.empty and "Reviews Completed" in judge_activity.columns
+        else 0
+    )
+    judges_complete = (
+        int((judge_activity["Reviews Completed"] >= total_submissions).sum())
+        if total_submissions and not judge_activity.empty
+        else 0
+    )
+    scored_projects = (
+        int((project_scores["Reviews Completed"] > 0).sum())
+        if not project_scores.empty and "Reviews Completed" in project_scores.columns
+        else 0
+    )
+    avg_score = pd.to_numeric(scores.get("total_score"), errors="coerce").mean() if not scores.empty else np.nan
+
+    kpi_cols = st.columns(5)
+    kpi_cols[0].metric("Submissions", total_submissions)
+    kpi_cols[1].metric("Judges Logged In", logged_in_judges)
+    kpi_cols[2].metric("Completed Reviews", completed_reviews)
+    kpi_cols[3].metric("Judges Complete", f"{judges_complete}/{total_judges}")
+    kpi_cols[4].metric("Avg Score /20", format_optional_number(avg_score))
+
+    st.markdown('<div class="section-header">Top 3 Members / Teams</div>', unsafe_allow_html=True)
+    top_projects = project_scores[project_scores["Reviews Completed"] > 0].head(3) if not project_scores.empty else project_scores
+    if top_projects.empty:
+        st.caption("No scored submissions yet.")
+    else:
+        top_cols = st.columns(len(top_projects))
+        for index, (_, row) in enumerate(top_projects.iterrows(), start=1):
+            with top_cols[index - 1]:
+                with st.container(border=True):
+                    st.subheader(f"#{index} {row['Member / Team']}")
+                    st.metric("Avg Score /20", format_optional_number(row["Avg Score /20"]))
+                    st.caption(
+                        f"Total {format_optional_number(row['Total Score'])} across "
+                        f"{int(row['Reviews Completed'])} review(s)"
+                    )
+
+    st.markdown('<div class="section-header">Member / Team Scoreboard</div>', unsafe_allow_html=True)
+    project_display = project_scores.copy()
+    if not project_display.empty:
+        project_display["Total Score"] = pd.to_numeric(project_display["Total Score"], errors="coerce").round(1)
+        project_display["Avg Score /20"] = pd.to_numeric(project_display["Avg Score /20"], errors="coerce").round(1)
+    st.dataframe(project_display, use_container_width=True, hide_index=True)
+    if total_submissions and scored_projects < total_submissions:
+        st.caption(f"{scored_projects}/{total_submissions} member/team submissions have at least one judge score.")
+
+    st.markdown('<div class="section-header">Judge Review Completion</div>', unsafe_allow_html=True)
+    judge_display = judge_activity.copy()
+    if not judge_display.empty:
+        judge_display["Completion %"] = pd.to_numeric(judge_display["Completion %"], errors="coerce").round(1)
+        judge_display["Total Score Awarded"] = pd.to_numeric(
+            judge_display["Total Score Awarded"], errors="coerce"
+        ).round(1)
+        judge_display["Avg Score /20"] = pd.to_numeric(judge_display["Avg Score /20"], errors="coerce").round(1)
+    st.dataframe(
+        judge_display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Completion %": st.column_config.ProgressColumn(
+                "Completion %",
+                min_value=0,
+                max_value=100,
+                format="%.1f%%",
+            )
+        },
+    )
+
+    st.markdown('<div class="section-header">All Judge Scorecards</div>', unsafe_allow_html=True)
+    if scores.empty:
+        st.caption("No judge scorecards have been saved yet.")
+        return
+
+    score_rows = scores.copy()
+    score_rows["judge_email"] = score_rows["judge_email"].fillna("").astype(str)
+    score_rows["project_name"] = score_rows["project_name"].fillna("Untitled project").astype(str)
+    score_rows["total_score"] = pd.to_numeric(score_rows["total_score"], errors="coerce")
+
+    filter_cols = st.columns(2)
+    with filter_cols[0]:
+        selected_judges = st.multiselect(
+            "Filter judges",
+            sorted([judge for judge in score_rows["judge_email"].dropna().unique() if judge]),
+        )
+    with filter_cols[1]:
+        selected_projects = st.multiselect(
+            "Filter members / teams",
+            sorted([project for project in score_rows["project_name"].dropna().unique() if project]),
+        )
+
+    if selected_judges:
+        score_rows = score_rows[score_rows["judge_email"].isin(selected_judges)]
+    if selected_projects:
+        score_rows = score_rows[score_rows["project_name"].isin(selected_projects)]
+
+    score_display = score_rows.rename(
+        columns={
+            "judge_email": "Judge",
+            "project_name": "Member / Team",
+            "submitter_name": "Submitter",
+            "accuracy": "Creativity",
+            "completeness": "Grounded Answers",
+            "presentation": "Gap Capture",
+            "business_impact": "Usability",
+            "technical_quality": "Impact",
+            "total_score": "Total /20",
+            "comments": "Comments",
+            "updated_at": "Updated",
+        }
+    )
+    display_columns = [
+        "Judge",
+        "Member / Team",
+        "Submitter",
+        "Total /20",
+        "Creativity",
+        "Grounded Answers",
+        "Gap Capture",
+        "Usability",
+        "Impact",
+        "Comments",
+        "Updated",
+    ]
+    existing_columns = [column for column in display_columns if column in score_display.columns]
+    st.dataframe(
+        score_display[existing_columns].sort_values(
+            ["Updated", "Judge"],
+            ascending=[False, True],
+            na_position="last",
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 def render_judge_portal(judge_email: str) -> None:
     render_hackathon_scoring_guide()
     st.markdown('<div class="main-title">Judge Portal</div>', unsafe_allow_html=True)
@@ -2026,16 +2552,35 @@ if not st.session_state.get("judge_logged_in"):
     st.stop()
 
 judge_email = st.session_state["judge_email"]
+if not st.session_state.get("judge_login_recorded"):
+    try:
+        record_judge_login(judge_email)
+        st.session_state.pop("login_tracking_error", None)
+    except Exception as exc:
+        st.session_state["login_tracking_error"] = str(exc)
+    st.session_state["judge_login_recorded"] = True
+
 st.sidebar.markdown(f"Signed in as `{judge_email}`")
 st.sidebar.link_button("Open submit page", "?page=submit", use_container_width=True)
 if st.sidebar.button("Log out", use_container_width=True):
     st.session_state.clear()
     st.rerun()
 
+view_options = ["Judge Portal", "Submit Project"]
+if is_admin_email(judge_email):
+    view_options.append("Admin Dashboard")
+view_options.append("AI Evaluation Dashboard")
+
+default_view = "Judge Portal"
+if requested_page == "submit":
+    default_view = "Submit Project"
+elif requested_page == "admin" and "Admin Dashboard" in view_options:
+    default_view = "Admin Dashboard"
+
 portal_view = st.sidebar.radio(
     "View",
-    ["Judge Portal", "Submit Project", "AI Evaluation Dashboard"],
-    index=1 if requested_page == "submit" else 0,
+    view_options,
+    index=view_options.index(default_view),
 )
 
 if portal_view == "Judge Portal":
@@ -2044,6 +2589,10 @@ if portal_view == "Judge Portal":
 
 if portal_view == "Submit Project":
     render_public_submission()
+    st.stop()
+
+if portal_view == "Admin Dashboard":
+    render_admin_dashboard(judge_email)
     st.stop()
 
 # Sidebar: Config and Action
