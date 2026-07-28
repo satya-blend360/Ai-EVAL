@@ -10,6 +10,8 @@ from ai_eval.config import (
     ANTHROPIC_API_KEY,
     DEFAULT_PROVIDER,
     DEFAULT_MODEL,
+    OPENAI_MODEL,
+    ANTHROPIC_MODEL,
     USE_MOCK_FALLBACK
 )
 
@@ -19,37 +21,32 @@ class LLMProvider:
     """Unified manager for calling LLMs (OpenAI, Anthropic, or Mock Fallback)."""
 
     def __init__(self, provider: Optional[str] = None, model: Optional[str] = None):
-        self.provider = (provider or DEFAULT_PROVIDER).lower()
+        self.provider = (provider or DEFAULT_PROVIDER).split("#", 1)[0].strip().lower()
         self.model = model or DEFAULT_MODEL
-        
-        # Detect if we should use mock fallback
+        self.openai_model = model if model and self.provider == "openai" else OPENAI_MODEL
+        self.anthropic_model = model if model and self.provider == "anthropic" else ANTHROPIC_MODEL
+
+        # Explicit mock mode is still useful for tests and offline demos.
         self.is_mock = False
         if self.provider == "mock":
             self.is_mock = True
-        elif self.provider == "openai" and not OPENAI_API_KEY:
-            if USE_MOCK_FALLBACK:
-                logger.warning("OPENAI_API_KEY not found in environment. Falling back to MOCK mode.")
-                self.is_mock = True
-            else:
-                raise ValueError("OPENAI_API_KEY is required but missing, and USE_MOCK_FALLBACK is disabled.")
-        elif self.provider == "anthropic" and not ANTHROPIC_API_KEY:
-            if USE_MOCK_FALLBACK:
-                logger.warning("ANTHROPIC_API_KEY not found in environment. Falling back to MOCK mode.")
-                self.is_mock = True
-            else:
-                raise ValueError("ANTHROPIC_API_KEY is required but missing, and USE_MOCK_FALLBACK is disabled.")
-            
+        elif self.provider not in {"openai", "anthropic", "auto"}:
+            raise ValueError(f"Unsupported provider: {self.provider}")
+
         if self.is_mock:
             logger.info("LLMProvider initialized in MOCK Mode.")
         else:
-            logger.info(f"LLMProvider initialized with provider: {self.provider}, model: {self.model}")
-            
+            logger.info(
+                "LLMProvider initialized with real provider fallback chain: "
+                + " -> ".join(self._provider_chain())
+            )
+
         self.call_history = []
 
     def call_structured(
-        self, 
-        system_prompt: str, 
-        user_prompt: str, 
+        self,
+        system_prompt: str,
+        user_prompt: str,
         response_model: Type[T],
         temperature: float = 0.0
     ) -> tuple[T, Dict[str, Any]]:
@@ -58,20 +55,20 @@ class LLMProvider:
         Returns the parsed model and metadata (tokens, latency, cost).
         """
         start_time = time.time()
-        
+
         if self.is_mock:
             # Generate mock data matching response_model
             latency = random.uniform(0.3, 1.2)  # simulate network delay
             time.sleep(latency)
-            
+
             mock_data = self._generate_mock_data(response_model, user_prompt)
             latency_ms = (time.time() - start_time) * 1000
-            
+
             # Estimate tokens
             prompt_tokens = len(system_prompt + user_prompt) // 4
             completion_tokens = len(json.dumps(mock_data)) // 4
             cost = (prompt_tokens * 0.15 + completion_tokens * 0.60) / 1_000_000  # mock gpt-4o-mini pricing
-            
+
             metadata = {
                 "latency_ms": latency_ms,
                 "cost_usd": cost,
@@ -81,16 +78,77 @@ class LLMProvider:
             }
             parsed_object = response_model.model_validate(mock_data)
         else:
-            # Real API Calls
-            if self.provider == "openai":
-                parsed_object, metadata = self._call_openai(system_prompt, user_prompt, response_model, temperature, start_time)
-            elif self.provider == "anthropic":
-                parsed_object, metadata = self._call_anthropic(system_prompt, user_prompt, response_model, temperature, start_time)
-            else:
-                raise ValueError(f"Unsupported provider: {self.provider}")
-                
+            parsed_object, metadata = self._call_with_provider_fallback(
+                system_prompt,
+                user_prompt,
+                response_model,
+                temperature,
+                start_time,
+            )
+
         self.call_history.append(metadata)
         return parsed_object, metadata
+
+    def _provider_chain(self) -> list[str]:
+        if self.provider == "anthropic":
+            return ["anthropic", "openai"]
+        return ["openai", "anthropic"]
+
+    def _call_with_provider_fallback(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: Type[T],
+        temperature: float,
+        start_time: float,
+    ) -> tuple[T, Dict[str, Any]]:
+        errors = []
+
+        for provider in self._provider_chain():
+            if provider == "openai":
+                if not OPENAI_API_KEY:
+                    errors.append("OpenAI: OPENAI_API_KEY is missing")
+                    continue
+                model = self.openai_model
+                call = self._call_openai
+            else:
+                if not ANTHROPIC_API_KEY:
+                    errors.append("Anthropic: ANTHROPIC_API_KEY is missing")
+                    continue
+                model = self.anthropic_model
+                call = self._call_anthropic
+
+            try:
+                parsed_object, metadata = call(
+                    system_prompt,
+                    user_prompt,
+                    response_model,
+                    temperature,
+                    start_time,
+                    model,
+                )
+                metadata["provider"] = provider
+                metadata["model"] = model
+                logger.info(f"LLM call succeeded with {provider} model {model}.")
+                return parsed_object, metadata
+            except Exception as exc:
+                error_text = self._sanitize_error(exc)
+                logger.error(f"{provider.title()} API call failed: {error_text}", exc_info=True)
+                errors.append(f"{provider.title()}: {error_text}")
+
+        detail = " | ".join(errors) if errors else "No provider attempts were made."
+        raise RuntimeError(
+            "API keys not working. OpenAI failed and Anthropic fallback also failed. "
+            "Please change or add new API keys. Details: "
+            f"{detail}"
+        )
+
+    def _sanitize_error(self, exc: Exception) -> str:
+        message = f"{type(exc).__name__}: {exc}"
+        for secret in [OPENAI_API_KEY, ANTHROPIC_API_KEY]:
+            if secret:
+                message = message.replace(secret, "[redacted]")
+        return message[:500]
 
     def _call_openai(
         self,
@@ -98,53 +156,40 @@ class LLMProvider:
         user_prompt: str,
         response_model: Type[T],
         temperature: float,
-        start_time: float
+        start_time: float,
+        model: str,
     ) -> tuple[T, Dict[str, Any]]:
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=OPENAI_API_KEY)
-            
-            # Use structured outputs capability
-            response = client.beta.chat.completions.parse(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format=response_model,
-                temperature=temperature
-            )
-            
-            latency_ms = (time.time() - start_time) * 1000
-            choice = response.choices[0]
-            parsed_object = choice.message.parsed
-            usage = response.usage
-            
-            # Estimate cost based on model
-            cost = self._calculate_cost(self.model, usage.prompt_tokens, usage.completion_tokens)
-            
-            metadata = {
-                "latency_ms": latency_ms,
-                "cost_usd": cost,
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens,
-            }
-            return parsed_object, metadata
-            
-        except Exception as e:
-            logger.error(f"OpenAI API call failed: {e}. Falling back to mock data.", exc_info=True)
-            # Fallback to mock on error to maintain dashboard resilience
-            mock_data = self._generate_mock_data(response_model, user_prompt)
-            latency_ms = (time.time() - start_time) * 1000
-            metadata = {
-                "latency_ms": latency_ms,
-                "cost_usd": 0.0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-            }
-            return response_model.model_validate(mock_data), metadata
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)
+
+        response = client.beta.chat.completions.parse(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format=response_model,
+            temperature=temperature
+        )
+
+        latency_ms = (time.time() - start_time) * 1000
+        choice = response.choices[0]
+        parsed_object = choice.message.parsed
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens if usage else len(system_prompt + user_prompt) // 4
+        completion_tokens = usage.completion_tokens if usage else 0
+        total_tokens = usage.total_tokens if usage else prompt_tokens + completion_tokens
+
+        cost = self._calculate_cost(model, prompt_tokens, completion_tokens)
+
+        metadata = {
+            "latency_ms": latency_ms,
+            "cost_usd": cost,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+        return parsed_object, metadata
 
     def _call_anthropic(
         self,
@@ -152,58 +197,45 @@ class LLMProvider:
         user_prompt: str,
         response_model: Type[T],
         temperature: float,
-        start_time: float
+        start_time: float,
+        model: str,
     ) -> tuple[T, Dict[str, Any]]:
-        # Anthropic wrapper using langchain or official client
         try:
             from langchain_anthropic import ChatAnthropic
             from langchain_core.prompts import ChatPromptTemplate
-            
-            chat = ChatAnthropic(
-                model=self.model,
-                anthropic_api_key=ANTHROPIC_API_KEY,
-                temperature=temperature
-            )
-            
-            # Bind Pydantic model for structured tool output
-            structured_llm = chat.with_structured_output(response_model)
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("user", user_prompt)
-            ])
-            
-            chain = prompt | structured_llm
-            result = chain.invoke({})
-            
-            latency_ms = (time.time() - start_time) * 1000
-            
-            # Approximate token counts for Anthropic if not directly available
-            prompt_tokens = len(system_prompt + user_prompt) // 4
-            completion_tokens = len(json.dumps(result.model_dump())) // 4
-            cost = self._calculate_cost(self.model, prompt_tokens, completion_tokens)
-            
-            metadata = {
-                "latency_ms": latency_ms,
-                "cost_usd": cost,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            }
-            return result, metadata
-            
-        except Exception as e:
-            logger.error(f"Anthropic API call failed: {e}. Falling back to mock data.", exc_info=True)
-            mock_data = self._generate_mock_data(response_model, user_prompt)
-            latency_ms = (time.time() - start_time) * 1000
-            metadata = {
-                "latency_ms": latency_ms,
-                "cost_usd": 0.0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-            }
-            return response_model.model_validate(mock_data), metadata
+        except ImportError as exc:
+            raise RuntimeError("langchain-anthropic is not installed. Run `pip install -r requirements.txt`.") from exc
+
+        chat = ChatAnthropic(
+            model=model,
+            anthropic_api_key=ANTHROPIC_API_KEY,
+            temperature=temperature
+        )
+
+        structured_llm = chat.with_structured_output(response_model)
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("user", user_prompt)
+        ])
+
+        chain = prompt | structured_llm
+        result = chain.invoke({})
+
+        latency_ms = (time.time() - start_time) * 1000
+
+        prompt_tokens = len(system_prompt + user_prompt) // 4
+        completion_tokens = len(json.dumps(result.model_dump())) // 4
+        cost = self._calculate_cost(model, prompt_tokens, completion_tokens)
+
+        metadata = {
+            "latency_ms": latency_ms,
+            "cost_usd": cost,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+        return result, metadata
 
     def _calculate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Estimates pricing in USD."""
@@ -217,19 +249,19 @@ class LLMProvider:
             "claude-3-opus": (15.00 / 1_000_000, 75.00 / 1_000_000),
             "claude-3-haiku": (0.25 / 1_000_000, 1.25 / 1_000_000),
         }
-        
+
         # Find matches
         for key, (in_rate, out_rate) in rates.items():
             if key in model:
                 return (prompt_tokens * in_rate) + (completion_tokens * out_rate)
-                
+
         # Default: gpt-4o-mini rates
         return (prompt_tokens * 0.15 / 1_000_000) + (completion_tokens * 0.60 / 1_000_000)
 
     def _generate_mock_data(self, response_model: Type[T], user_prompt: str) -> Dict[str, Any]:
         """Generates realistic mock data based on the requested output schema."""
         model_name = response_model.__name__
-        
+
         if "Extraction" in model_name:
             if "accuracy" in response_model.model_fields:
                 return {
@@ -251,7 +283,7 @@ class LLMProvider:
                     "overall": round(random.uniform(8.8, 9.7), 2),
                     "reasoning": "The system output is highly accurate, matching the reference facts precisely. All required details about the tech stack are present and correctly formatted, and the language is clear and useful."
                 }
-        
+
         if "Hallucination" in model_name:
             # Hallucination checking: claim extraction
             claims = [
@@ -260,24 +292,24 @@ class LLMProvider:
                 {"claim": "The project reduced response latency by 85%.", "is_supported": True, "evidence": "Performance improvements section highlights latency reduction from 1200ms to 180ms (85% speedup).", "reasoning": "Exact match found."},
                 {"claim": "The project generated $5M in annual recurring revenue.", "is_supported": False, "evidence": "None", "reasoning": "The reference mentions project billing was $500,000, not $5M ARR. This is a hallucinated claim."}
             ]
-            
+
             # Randomly decide if there's a hallucination
             has_hallucination = random.choice([True, False, False, False])  # 25% chance of hallucination in mock
             if not has_hallucination:
                 claims[3]["is_supported"] = True
                 claims[3]["evidence"] = "Reference mentions project billing was $5M over two years."
                 claims[3]["reasoning"] = "Supported by page 2 financial summary."
-                
+
             supported = sum(1 for c in claims if c["is_supported"])
             rate = ((len(claims) - supported) / len(claims)) * 100
-            
+
             return {
                 "supported_claims": supported,
                 "total_claims": len(claims),
                 "hallucination_rate": round(rate, 1),
                 "claims": claims
             }
-            
+
         if "SalesBrief" in model_name:
             # Sales brief evaluation
             readability = round(random.uniform(8.0, 9.8), 1)
@@ -287,7 +319,7 @@ class LLMProvider:
             persuasiveness = round(random.uniform(8.2, 9.8), 1)
             business_value = round(random.uniform(8.0, 9.7), 1)
             overall = round((readability + professionalism + evidence_usage + completeness + persuasiveness + business_value) / 6, 2)
-            
+
             return {
                 "readability": readability,
                 "professionalism": professionalism,
@@ -322,5 +354,5 @@ class LLMProvider:
                 res[field_name] = {}
             else:
                 res[field_name] = None
-                
+
         return res

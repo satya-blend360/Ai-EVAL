@@ -15,6 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
+from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -23,6 +24,7 @@ from typing import List, Dict, Any, Optional
 import sys
 APP_ROOT = os.path.abspath(os.path.dirname(__file__))
 SRC_ROOT = os.path.join(APP_ROOT, "src")
+load_dotenv(Path(APP_ROOT) / ".env")
 if SRC_ROOT not in sys.path:
     sys.path.insert(0, SRC_ROOT)
 if APP_ROOT not in sys.path:
@@ -64,6 +66,12 @@ def run_live_prototype_evaluation(base_url: str, member_name: Optional[str] = No
 
 
 def show_optional_evaluator_error(exc: Exception) -> None:
+    message = str(exc)
+    if "API keys not working" in message:
+        st.error("API keys not working. Please change or add new API keys.")
+        st.caption(message)
+        return
+
     st.error(
         "The optional AI evaluation module could not load in this environment. "
         "The submission and judge portal pages are still available."
@@ -1273,6 +1281,8 @@ def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -
         "Member / Team",
         "Submitter",
         "AI Score /100",
+        "Automatic Correctness Score /100",
+        "Correct Answer Comparison",
         "Reviews Completed",
         "Total Score",
         "Avg Score /20",
@@ -1283,7 +1293,14 @@ def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -
 
     base_columns = [
         column
-        for column in ["submission_id", "project_name", "submitter_name", "ai_score"]
+        for column in [
+            "submission_id",
+            "project_name",
+            "submitter_name",
+            "ai_score",
+            "correctness_score",
+            "correctness_summary",
+        ]
         if column in submissions.columns
     ]
     projects = submissions[base_columns].copy()
@@ -1322,6 +1339,16 @@ def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -
         pd.to_numeric(projects["ai_score"], errors="coerce")
         if "ai_score" in projects.columns
         else np.nan
+    )
+    projects["Automatic Correctness Score /100"] = (
+        pd.to_numeric(projects["correctness_score"], errors="coerce")
+        if "correctness_score" in projects.columns
+        else np.nan
+    )
+    projects["Correct Answer Comparison"] = (
+        projects["correctness_summary"].fillna("Not calculated")
+        if "correctness_summary" in projects.columns
+        else "Not calculated"
     )
     projects["Member / Team"] = projects.get("project_name", pd.Series(dtype=str)).fillna("Untitled project")
     projects["Submitter"] = projects.get("submitter_name", pd.Series(dtype=str)).fillna("Unknown submitter")
@@ -2089,6 +2116,16 @@ def format_optional_number(value: Any, suffix: str = "", decimals: int = 1) -> s
         return "N/A"
 
 
+def render_llm_fallback_status_sidebar() -> None:
+    openai_key_set = bool(get_secret("OPENAI_API_KEY").strip())
+    anthropic_key_set = bool(get_secret("ANTHROPIC_API_KEY").strip())
+    st.sidebar.caption(
+        "LLM fallback: OpenAI first, Anthropic second. "
+        f"OpenAI key: {'present' if openai_key_set else 'missing'}; "
+        f"Anthropic key: {'present' if anthropic_key_set else 'missing'}."
+    )
+
+
 def render_admin_dashboard(judge_email: str) -> None:
     if not is_admin_email(judge_email):
         st.error("Admin dashboard access is restricted.")
@@ -2180,6 +2217,10 @@ def render_admin_dashboard(judge_email: str) -> None:
                     st.subheader(f"#{index} {row['Member / Team']}")
                     st.metric("Avg Score /20", format_optional_number(row["Avg Score /20"]))
                     st.metric("AI Score /100", format_optional_number(row["AI Score /100"]))
+                    st.metric(
+                        "Correctness /100",
+                        format_optional_number(row["Automatic Correctness Score /100"]),
+                    )
                     st.caption(
                         f"Total {format_optional_number(row['Total Score'])} across "
                         f"{int(row['Reviews Completed'])} review(s)"
@@ -2189,6 +2230,10 @@ def render_admin_dashboard(judge_email: str) -> None:
     project_display = project_scores.copy()
     if not project_display.empty:
         project_display["AI Score /100"] = pd.to_numeric(project_display["AI Score /100"], errors="coerce").round(1)
+        project_display["Automatic Correctness Score /100"] = pd.to_numeric(
+            project_display["Automatic Correctness Score /100"],
+            errors="coerce",
+        ).round(1)
         project_display["Total Score"] = pd.to_numeric(project_display["Total Score"], errors="coerce").round(1)
         project_display["Avg Score /20"] = pd.to_numeric(project_display["Avg Score /20"], errors="coerce").round(1)
     st.dataframe(project_display, use_container_width=True, hide_index=True)
@@ -2284,6 +2329,295 @@ def render_admin_dashboard(judge_email: str) -> None:
     )
 
 
+def render_submission_quality_dashboard(judge_email: str) -> None:
+    st.sidebar.markdown("## Live Submission Data")
+    render_llm_fallback_status_sidebar()
+    render_starter_warehouse_sidebar()
+    if st.sidebar.button("Refresh dashboard", use_container_width=True):
+        load_submissions.clear()
+        load_all_judge_scores.clear()
+        st.rerun()
+
+    if not db_configured():
+        st.warning("Databricks secrets are not configured. Dashboard data is limited to this Streamlit session.")
+
+    st.markdown('<div class="main-title">Project Intelligence Hub (PIH)</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="sub-title">Live submission, judge review, and scoring monitor.</div>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        submissions = load_submissions()
+    except Exception as exc:
+        st.error(f"Could not load submissions from Databricks: {exc}")
+        submissions = local_submissions()
+
+    try:
+        scores = load_all_judge_scores()
+    except Exception as exc:
+        st.error(f"Could not load judge scores: {exc}")
+        scores = empty_score_details()
+
+    project_scores = build_project_score_table(submissions, scores)
+    judge_activity = build_judge_activity_table(scores, len(submissions))
+
+    total_submissions = len(submissions)
+    scored_submissions = (
+        int((project_scores["Reviews Completed"] > 0).sum())
+        if not project_scores.empty and "Reviews Completed" in project_scores.columns
+        else 0
+    )
+    pending_first_review = max(total_submissions - scored_submissions, 0)
+    judges_logged_in = (
+        int((pd.to_numeric(judge_activity["Login Count"], errors="coerce").fillna(0) > 0).sum())
+        if not judge_activity.empty and "Login Count" in judge_activity.columns
+        else 0
+    )
+    completed_reviews = (
+        int(judge_activity["Reviews Completed"].sum())
+        if not judge_activity.empty and "Reviews Completed" in judge_activity.columns
+        else 0
+    )
+    avg_ai_score = (
+        pd.to_numeric(project_scores.get("AI Score /100"), errors="coerce").mean()
+        if not project_scores.empty
+        else np.nan
+    )
+    avg_judge_score = (
+        pd.to_numeric(scores.get("total_score"), errors="coerce").mean()
+        if not scores.empty
+        else np.nan
+    )
+    overall_quality = avg_ai_score
+    overall_source = "Avg AI score from submitted projects"
+    if pd.isna(overall_quality) and not pd.isna(avg_judge_score):
+        overall_quality = avg_judge_score / PIH_SCORE_MAX * 100.0
+        overall_source = "Avg judge score scaled to 100"
+
+    metric_cols = st.columns(5)
+    with metric_cols[0]:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">Overall System Quality</div>
+                <div class="metric-value">{format_optional_number(overall_quality)}</div>
+                <div class="metric-delta delta-positive">{overall_source}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with metric_cols[1]:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">Members Submitted</div>
+                <div class="metric-value">{total_submissions}</div>
+                <div class="metric-delta delta-positive">Real submission rows</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with metric_cols[2]:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">Judges Logged In</div>
+                <div class="metric-value">{judges_logged_in}</div>
+                <div class="metric-delta delta-positive">Tracked judge logins</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with metric_cols[3]:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">Completed Reviews</div>
+                <div class="metric-value">{completed_reviews}</div>
+                <div class="metric-delta delta-positive">Saved judge scorecards</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with metric_cols[4]:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">Avg Judge Score</div>
+                <div class="metric-value">{format_optional_number(avg_judge_score)}</div>
+                <div class="metric-delta delta-positive">Out of {PIH_SCORE_MAX}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    tab_overview, tab_details, tab_judges = st.tabs(
+        ["Overview & Trends", "Deep-Dive Metrics", "Judge Monitoring"]
+    )
+
+    with tab_overview:
+        g_col1, g_col2 = st.columns([1, 1])
+        with g_col1:
+            st.markdown('<div class="section-header">Submission Review Status</div>', unsafe_allow_html=True)
+            status_df = pd.DataFrame(
+                [
+                    {"Metric": "Submitted", "Count": total_submissions},
+                    {"Metric": "Scored", "Count": scored_submissions},
+                    {"Metric": "Pending First Review", "Count": pending_first_review},
+                    {"Metric": "Completed Reviews", "Count": completed_reviews},
+                    {"Metric": "Judges Logged In", "Count": judges_logged_in},
+                ]
+            )
+            fig_status = px.bar(
+                status_df,
+                x="Metric",
+                y="Count",
+                text="Count",
+                color="Metric",
+                color_discrete_sequence=["#14b8a6", "#3b82f6", "#f59e0b", "#8b5cf6", "#10b981"],
+            )
+            fig_status.update_layout(
+                showlegend=False,
+                margin=dict(l=20, r=20, t=10, b=20),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_status, use_container_width=True)
+
+        with g_col2:
+            st.markdown('<div class="section-header">Real Score Trend</div>', unsafe_allow_html=True)
+            if project_scores.empty:
+                st.info("No submissions are available yet.")
+            else:
+                trend_df = project_scores.copy()
+                trend_df["AI Score /100"] = pd.to_numeric(trend_df["AI Score /100"], errors="coerce")
+                trend_df["Avg Judge Score /100"] = (
+                    pd.to_numeric(trend_df["Avg Score /20"], errors="coerce") / PIH_SCORE_MAX * 100.0
+                )
+                trend_df = trend_df[["Member / Team", "AI Score /100", "Avg Judge Score /100"]].melt(
+                    id_vars="Member / Team",
+                    var_name="Score Type",
+                    value_name="Score",
+                )
+                trend_df = trend_df.dropna(subset=["Score"])
+                if trend_df.empty:
+                    st.info("No AI or judge scores have been recorded yet.")
+                else:
+                    fig_trend = px.line(
+                        trend_df,
+                        x="Member / Team",
+                        y="Score",
+                        color="Score Type",
+                        markers=True,
+                        color_discrete_sequence=["#14b8a6", "#3b82f6"],
+                    )
+                    fig_trend.update_layout(
+                        yaxis=dict(range=[0, 105]),
+                        margin=dict(l=20, r=20, t=10, b=20),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                    )
+                    st.plotly_chart(fig_trend, use_container_width=True)
+
+        st.markdown('<div class="section-header">Top 3 Members / Teams</div>', unsafe_allow_html=True)
+        top_projects = project_scores[project_scores["Reviews Completed"] > 0].head(3) if not project_scores.empty else project_scores
+        if top_projects.empty:
+            st.caption("No scored submissions yet.")
+        else:
+            top_cols = st.columns(len(top_projects))
+            for index, (_, row) in enumerate(top_projects.iterrows(), start=1):
+                with top_cols[index - 1]:
+                    with st.container(border=True):
+                        st.subheader(f"#{index} {row['Member / Team']}")
+                        st.metric("AI Score /100", format_optional_number(row["AI Score /100"]))
+                        st.metric(
+                            "Correctness /100",
+                            format_optional_number(row["Automatic Correctness Score /100"]),
+                        )
+                        st.metric("Avg Judge /20", format_optional_number(row["Avg Score /20"]))
+                        st.caption(f"{int(row['Reviews Completed'])} completed review(s)")
+
+    with tab_details:
+        st.markdown('<div class="section-header">Member / Team Scoreboard</div>', unsafe_allow_html=True)
+        project_display = project_scores.copy()
+        if not project_display.empty:
+            project_display["AI Score /100"] = pd.to_numeric(project_display["AI Score /100"], errors="coerce").round(1)
+            project_display["Automatic Correctness Score /100"] = pd.to_numeric(
+                project_display["Automatic Correctness Score /100"],
+                errors="coerce",
+            ).round(1)
+            project_display["Total Score"] = pd.to_numeric(project_display["Total Score"], errors="coerce").round(1)
+            project_display["Avg Score /20"] = pd.to_numeric(project_display["Avg Score /20"], errors="coerce").round(1)
+        st.dataframe(project_display, use_container_width=True, hide_index=True)
+
+        st.markdown('<div class="section-header">All Judge Scorecards</div>', unsafe_allow_html=True)
+        if scores.empty:
+            st.caption("No judge scorecards have been saved yet.")
+        else:
+            score_display = scores.copy().rename(
+                columns={
+                    "judge_email": "Judge",
+                    "project_name": "Member / Team",
+                    "submitter_name": "Submitter",
+                    "accuracy": "Creativity",
+                    "completeness": "Grounded Answers",
+                    "presentation": "Gap Capture",
+                    "business_impact": "Usability",
+                    "technical_quality": "Impact",
+                    "total_score": "Total /20",
+                    "comments": "Comments",
+                    "updated_at": "Updated",
+                }
+            )
+            display_columns = [
+                "Judge",
+                "Member / Team",
+                "Submitter",
+                "Total /20",
+                "Creativity",
+                "Grounded Answers",
+                "Gap Capture",
+                "Usability",
+                "Impact",
+                "Comments",
+                "Updated",
+            ]
+            st.dataframe(
+                score_display[[column for column in display_columns if column in score_display.columns]],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    with tab_judges:
+        st.markdown('<div class="section-header">Judge Review Completion</div>', unsafe_allow_html=True)
+        judge_display = judge_activity.copy()
+        if not judge_display.empty:
+            judge_display["Completion %"] = pd.to_numeric(judge_display["Completion %"], errors="coerce").round(1)
+            judge_display["Total Score Awarded"] = pd.to_numeric(
+                judge_display["Total Score Awarded"], errors="coerce"
+            ).round(1)
+            judge_display["Avg Score /20"] = pd.to_numeric(judge_display["Avg Score /20"], errors="coerce").round(1)
+        st.dataframe(
+            judge_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Completion %": st.column_config.ProgressColumn(
+                    "Completion %",
+                    min_value=0,
+                    max_value=100,
+                    format="%.1f%%",
+                )
+            },
+        )
+
+        if total_submissions:
+            st.caption(
+                f"{scored_submissions}/{total_submissions} submitted member/team entries have at least one saved judge score."
+            )
+
+
 def render_judge_portal(judge_email: str) -> None:
     render_hackathon_scoring_guide()
     st.markdown('<div class="main-title">Judge Portal</div>', unsafe_allow_html=True)
@@ -2302,6 +2636,7 @@ def render_judge_portal(judge_email: str) -> None:
         except Exception:
             st.sidebar.caption("Auto-refresh package is unavailable in this environment.")
 
+    render_llm_fallback_status_sidebar()
     render_starter_warehouse_sidebar()
 
 
@@ -2584,6 +2919,8 @@ if requested_page == "submit":
     default_view = "Submit Project"
 elif requested_page == "admin" and "Admin Dashboard" in view_options:
     default_view = "Admin Dashboard"
+elif requested_page in {"ai", "dashboard", "evaluation"}:
+    default_view = "AI Evaluation Dashboard"
 
 portal_view = st.sidebar.radio(
     "View",
@@ -2603,468 +2940,6 @@ if portal_view == "Admin Dashboard":
     render_admin_dashboard(judge_email)
     st.stop()
 
-# Sidebar: Config and Action
-st.sidebar.markdown("## 🤖 Framework Controls")
-
-# API Keys status
-openai_key_set = "OPENAI_API_KEY" in os.environ or os.getenv("OPENAI_API_KEY") is not None
-st.sidebar.markdown(
-    f"**OpenAI API Status:** {'🟢 Connected' if openai_key_set else '🔴 Mock Mode'}"
-)
-
-# Run Evaluation Button in Sidebar
-st.sidebar.markdown("---")
-st.sidebar.markdown("### ⚡ Trigger Assessment")
-if st.sidebar.button("Run New Pipeline Evaluation", use_container_width=True):
-    with st.spinner("Executing evaluation pipeline..."):
-        try:
-            # Load sample data
-            data = load_evaluation_dataset()
-            ext_case = data.get("extraction_cases", [None])[0]
-            ret_case = data.get("retrieval_cases", [None])[0]
-            rag_case = data.get("rag_cases", [None])[0]
-            hal_case = data.get("hallucination_cases", [None])[0]
-            sales_case = data.get("sales_brief_cases", [None])[0]
-            judge_case = data.get("judge_cases", [None])[0]
-
-            evaluator = create_ai_evaluator()
-            report = evaluator.run_evaluation(
-                extraction_data=ext_case,
-                retrieval_data=ret_case,
-                rag_data=rag_case,
-                hallucination_data={
-                    "generated_answer": hal_case.get("generated_answer") if hal_case else "",
-                    "evidence_texts": hal_case.get("evidence_texts") if hal_case else []
-                } if hal_case else None,
-                sales_brief_data=sales_case,
-                judge_data=judge_case
-            )
-            # Save the report to disk so it appears in the dropdown list
-            output_path = REPORTS_DIR / f"report_{report.run_id}.json"
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(report.model_dump(), f, indent=2)
-            sample_path = REPORTS_DIR / "sample_report.json"
-            with open(sample_path, "w", encoding="utf-8") as f:
-                json.dump(report.model_dump(), f, indent=2)
-
-            # Force reload
-            st.toast(f"Evaluation {report.run_id} completed successfully!", icon="✅")
-            time.sleep(0.5)
-            st.rerun()
-        except Exception as exc:
-            show_optional_evaluator_error(exc)
-
-# Live Submission Evaluation Button in Sidebar
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🌐 Live Prototype Evaluator")
-live_url = st.sidebar.text_input("Prototype Base URL:", placeholder="http://localhost:8000")
-member_name = st.sidebar.text_input("Member Name (optional):", placeholder="e.g. john_doe")
-if st.sidebar.button("Evaluate Remote API", use_container_width=True):
-    if not live_url:
-        st.sidebar.error("Please enter a valid base URL.")
-    else:
-        with st.spinner("Connecting to live prototype & evaluating endpoints..."):
-            try:
-                report = run_live_prototype_evaluation(live_url, member_name=member_name)
-                st.toast(f"Live Evaluation {report.run_id} completed successfully!", icon="✅")
-                time.sleep(0.5)
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Evaluation failed: {e}")
-
-# Load existing reports
-reports = load_all_reports()
-
-# Main Dashboard Content
-st.markdown('<div class="main-title">Project Intelligence Hub (PIH)</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">Continuous Quality & Performance Assessment Engine</div>', unsafe_allow_html=True)
-
-if not reports:
-    st.info("No evaluation runs detected yet. Click 'Run New Pipeline Evaluation' in the sidebar to generate the first run!")
+if portal_view == "AI Evaluation Dashboard":
+    render_submission_quality_dashboard(judge_email)
     st.stop()
-
-# Select which run to display
-run_ids = [r["run_id"] for r in reports]
-run_id_to_label = {r["run_id"]: f"{r['run_id']} (Score: {r.get('overall_score', 0.0):.1f})" for r in reports}
-selected_run_id = st.sidebar.selectbox(
-    "Select Evaluation Run:", 
-    run_ids, 
-    index=len(run_ids)-1,
-    format_func=lambda x: run_id_to_label.get(x, x)
-)
-selected_run = next(r for r in reports if r["run_id"] == selected_run_id)
-
-# Overall Score & KPI row
-col1, col2, col3, col4 = st.columns(4)
-
-overall_score = selected_run.get("overall_score", 0.0)
-perf = selected_run.get("performance", {})
-latency = perf.get("latency_ms", 0.0)
-cost = perf.get("cost_usd", 0.0)
-tokens = perf.get("total_tokens", 0)
-
-with col1:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Overall System Quality</div>
-        <div class="metric-value">{overall_score:.1f}</div>
-        <div class="metric-delta delta-positive">Weighted Rubric Score</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Average Latency</div>
-        <div class="metric-value">{latency:.0f} ms</div>
-        <div class="metric-delta {'delta-positive' if latency < 2000 else 'delta-negative'}">Target: &lt; 500ms</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Estimated Cost</div>
-        <div class="metric-value">${cost:.5f}</div>
-        <div class="metric-delta delta-positive">Target: &lt; $0.0020</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Total Tokens Used</div>
-        <div class="metric-value">{tokens:,}</div>
-        <div class="metric-delta delta-positive">Prompt & Completion</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ----------------- Visualizations: Radar & Historical Trends -----------------
-
-tab_overview, tab_details, tab_testbench = st.tabs(["📊 Overview & Trends", "🔍 Deep-Dive Metrics", "🧪 Real-Time Testbench"])
-
-with tab_overview:
-    g_col1, g_col2 = st.columns([1, 1])
-    
-    with g_col1:
-        st.markdown('<div class="section-header">Evaluation Category Scores</div>', unsafe_allow_html=True)
-        
-        # Prepare radar chart variables
-        categories = []
-        scores = []
-        
-        ext = selected_run.get("extraction")
-        ret = selected_run.get("retrieval")
-        rag = selected_run.get("rag")
-        hal = selected_run.get("hallucination")
-        sb = selected_run.get("sales_brief")
-        
-        if ext:
-            categories.append("Extraction Accuracy")
-            scores.append(ext.get("accuracy", 0.0))
-            categories.append("Completeness")
-            scores.append(ext.get("completeness", 0.0))
-        if ret:
-            categories.append("Retrieval Quality")
-            ret_q = (ret.get("precision_at_k", 0) + ret.get("recall_at_k", 0) + ret.get("mrr", 0) + ret.get("ndcg", 0)) / 4.0 * 100
-            scores.append(ret_q)
-        if hal:
-            categories.append("Hallucination Risk")
-            scores.append(100.0 - hal.get("hallucination_rate", 0.0))
-        if sb:
-            categories.append("Sales Brief Quality")
-            scores.append(sb.get("overall", 0.0) * 10.0)
-            
-        fig = go.Figure()
-        fig.add_trace(go.Scatterpolar(
-            r=scores,
-            theta=categories,
-            fill='toself',
-            fillcolor='rgba(20, 184, 166, 0.2)',
-            line=dict(color='#14b8a6', width=2),
-            marker=dict(size=6)
-        ))
-        
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(visible=True, range=[0, 100]),
-                bgcolor='rgba(15, 23, 42, 0.6)'
-            ),
-            showlegend=False,
-            margin=dict(l=40, r=40, t=20, b=40),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)'
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-    with g_col2:
-        st.markdown('<div class="section-header">Historical System Quality Trend</div>', unsafe_allow_html=True)
-        
-        if len(reports) > 1:
-            trend_df = pd.DataFrame([
-                {
-                    "Timestamp": datetime.fromisoformat(r["timestamp"]).strftime("%m/%d %H:%M"),
-                    "Overall Score": r["overall_score"],
-                    "Latency (ms)": r.get("performance", {}).get("latency_ms", 0.0),
-                    "Cost ($)": r.get("performance", {}).get("cost_usd", 0.0)
-                }
-                for r in reports
-            ])
-            
-            fig_trend = px.line(
-                trend_df,
-                x="Timestamp",
-                y="Overall Score",
-                markers=True,
-                color_discrete_sequence=["#3b82f6"]
-            )
-            fig_trend.update_layout(
-                yaxis=dict(range=[0, 105]),
-                margin=dict(l=20, r=20, t=10, b=20),
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig_trend, use_container_width=True)
-        else:
-            st.warning("Only 1 run recorded. Perform multiple evaluation runs to visualize historical trends.")
-            
-# ----------------- Deep Dive Subsystem Reports -----------------
-
-with tab_details:
-    st.markdown('<div class="section-header">System Sub-component Evaluations</div>', unsafe_allow_html=True)
-    
-    sub_tabs = st.tabs([
-        "📤 Information Extraction", 
-        "🔍 Semantic Search / Retrieval", 
-        "💬 RAG & Faithfulness",
-        "🎯 Hallucination Details",
-        "📄 Sales Brief Grader",
-        "👨‍⚖️ LLM-as-a-Judge"
-    ])
-    
-    # 1. Extraction Tab
-    with sub_tabs[0]:
-        if ext:
-            col_ex1, col_ex2 = st.columns([1, 2])
-            with col_ex1:
-                st.markdown("#### Extraction Summary Metrics")
-                st.write(f"**Field Accuracy:** {ext.get('accuracy')}%")
-                st.write(f"**Field Completeness:** {ext.get('completeness')}%")
-                st.write(f"**Citation Coverage:** {ext.get('citation_coverage')}%")
-                st.write(f"**Missing Field Detection:** {ext.get('missing_field_detection')}%")
-                st.write(f"**Confidence Score:** {ext.get('confidence_score')}%")
-                
-            with col_ex2:
-                st.markdown("#### Field-by-Field Audit Log")
-                details_dict = ext.get("field_details", {})
-                
-                rows = []
-                for fname, res in details_dict.items():
-                    rows.append({
-                        "Field": fname,
-                        "Expected Value": res.get("expected_value"),
-                        "Extracted Value": res.get("extracted_value"),
-                        "Correct": "✅" if res.get("is_correct") else "❌",
-                        "Citation Valid": "✅" if res.get("citation_valid") else "❌" if res.get("citation_provided") else "N/A",
-                        "Comments": res.get("comments")
-                    })
-                st.dataframe(pd.DataFrame(rows), use_container_width=True)
-        else:
-            st.info("No Information Extraction data present in this run.")
-
-    # 2. Retrieval Tab
-    with sub_tabs[1]:
-        if ret:
-            col_ret1, col_ret2 = st.columns([1, 2])
-            with col_ret1:
-                st.markdown("#### Search Engine Metrics")
-                st.write(f"**Precision@K:** {ret.get('precision_at_k')}")
-                st.write(f"**Recall@K:** {ret.get('recall_at_k')}")
-                st.write(f"**Mean Reciprocal Rank (MRR):** {ret.get('mrr')}")
-                st.write(f"**NDCG:** {ret.get('ndcg')}")
-                st.write(f"**Semantic Relevance Score:** {ret.get('relevance_score')}")
-                
-            with col_ret2:
-                st.markdown("#### Retrieval Sequence")
-                # Visualizing ranking sequence
-                st.write("Rank position of retrieved projects (targets in green):")
-                # In sample: we don't have full data in the model, but we can display the list
-                st.write("*Query:* AWS database migration projects with revenue over $200k")
-                st.markdown("""
-                1. 🟢 **Project Apex** (Expected)
-                2. 🟢 **Project Titan** (Expected)
-                3. 🔴 **Project Nebula** (Irrelevant)
-                4. 🔴 **Project Genesis** (Irrelevant)
-                5. 🟢 **Project Horizon** (Expected)
-                """)
-        else:
-            st.info("No Retrieval data present in this run.")
-
-    # 3. RAG Tab
-    with sub_tabs[2]:
-        if rag:
-            col_rag1, col_rag2 = st.columns([1, 2])
-            with col_rag1:
-                st.markdown("#### RAG Triad Assessment")
-                st.write(f"**Faithfulness:** {rag.get('faithfulness')}")
-                st.write(f"**Answer Relevancy:** {rag.get('answer_relevancy')}")
-                st.write(f"**Groundedness:** {rag.get('groundedness')}")
-                st.write(f"**Context Precision:** {rag.get('context_precision')}")
-                st.write(f"**Context Recall:** {rag.get('context_recall')}")
-                
-            with col_rag2:
-                st.markdown("#### Sample Answer Review")
-                st.markdown("**Query:** What were the outcomes and total revenue of Project Apex?")
-                st.info("**Generated Answer:** Project Apex achieved significant outcomes, including a 45% reduction in database licensing costs and a 30% reduction in query latency. The total revenue generated from the project was $250,000 under a time and materials billing structure.")
-                st.success("**Ground Truth Answer:** The outcomes of Project Apex were a 45% reduction in licensing costs and a 30% reduction in database response latency. The total revenue for the project was $250,000.")
-        else:
-            st.info("No RAG data present in this run.")
-
-    # 4. Hallucination Tab
-    with sub_tabs[3]:
-        if hal:
-            col_hal1, col_hal2 = st.columns([1, 2])
-            with col_hal1:
-                st.markdown("#### Hallucination Audit")
-                st.write(f"**Supported Claims:** {hal.get('supported_claims')}")
-                st.write(f"**Total Claims Extracted:** {hal.get('total_claims')}")
-                
-                rate = hal.get('hallucination_rate', 0.0)
-                st.metric(
-                    label="Hallucination Rate",
-                    value=f"{rate}%",
-                    delta=f"{rate}% unsupported",
-                    delta_color="inverse"
-                )
-                
-            with col_hal2:
-                st.markdown("#### Factual Claim Audit Log")
-                claims_list = hal.get("claims", [])
-                
-                for claim_item in claims_list:
-                    claim_text = claim_item.get("claim")
-                    supported = claim_item.get("is_supported")
-                    evidence = claim_item.get("evidence")
-                    reason = claim_item.get("reasoning")
-                    
-                    if supported:
-                        st.markdown(f"""
-                        <div class="claim-box claim-supported">
-                            <strong>✅ Supported Claim:</strong> {claim_text}<br/>
-                            <small><em>Evidence:</em> {evidence}</small><br/>
-                            <small><em>Reasoning:</em> {reason}</small>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"""
-                        <div class="claim-box claim-unsupported">
-                            <strong>❌ Hallucinated/Unsupported Claim:</strong> {claim_text}<br/>
-                            <small><em>Evidence:</em> {evidence or 'None'}</small><br/>
-                            <small><em>Reasoning:</em> {reason}</small>
-                        </div>
-                        """, unsafe_allow_html=True)
-        else:
-            st.info("No Hallucination data present in this run.")
-
-    # 5. Sales Brief Tab
-    with sub_tabs[4]:
-        if sb:
-            col_sb1, col_sb2 = st.columns([1, 2])
-            with col_sb1:
-                st.markdown("#### Rubric Grades (1-10)")
-                st.write(f"**Readability:** {sb.get('readability')}")
-                st.write(f"**Professionalism:** {sb.get('professionalism')}")
-                st.write(f"**Evidence Usage:** {sb.get('evidence_usage')}")
-                st.write(f"**Completeness:** {sb.get('completeness')}")
-                st.write(f"**Persuasiveness:** {sb.get('persuasiveness')}")
-                st.write(f"**Business Value:** {sb.get('business_value')}")
-                st.write(f"**Overall Average Score:** {sb.get('overall')}")
-                
-            with col_sb2:
-                st.markdown("#### Auditor Feedback")
-                st.success(sb.get("feedback", "No feedback recorded."))
-        else:
-            st.info("No Sales Brief data present in this run.")
-
-    # 6. Judge Tab
-    with sub_tabs[5]:
-        if selected_run.get("judge"):
-            jd = selected_run["judge"]
-            col_jd1, col_jd2 = st.columns([1, 2])
-            with col_jd1:
-                st.markdown("#### Judge Quality Scores (1-10)")
-                st.write(f"**Accuracy:** {jd.get('accuracy')}")
-                st.write(f"**Completeness:** {jd.get('completeness')}")
-                st.write(f"**Relevance:** {jd.get('relevance')}")
-                st.write(f"**Groundedness:** {jd.get('groundedness')}")
-                st.write(f"**Usefulness:** {jd.get('usefulness')}")
-                st.write(f"**Overall Judge Score:** {jd.get('overall')}")
-                
-            with col_jd2:
-                st.markdown("#### Judge Reasoning")
-                st.info(jd.get("reasoning", "No reasoning recorded."))
-        else:
-            st.info("No LLM-as-a-Judge data present in this run.")
-
-# ----------------- Interactive Testbench -----------------
-
-with tab_testbench:
-    st.markdown('<div class="section-header">Evaluation Testbench Playground</div>', unsafe_allow_html=True)
-    st.write("Input a custom query, generation, and contexts below to run an evaluation on the fly.")
-    
-    with st.form("interactive_eval_form"):
-        play_query = st.text_input("User Search Query", "What database was used in Project Apex?")
-        
-        play_contexts = st.text_area(
-            "Retrieved Context blocks (one per line)",
-            "Project Apex migrated database systems to AWS Aurora PostgreSQL, lowering licensing costs by 45%.\nThe project was completed in Q3 2024 for Acme Corp."
-        )
-        
-        play_answer = st.text_area(
-            "System Generated Answer",
-            "Project Apex utilized the AWS Aurora PostgreSQL cloud database engine."
-        )
-        
-        play_ground_truth = st.text_input("Ground Truth Answer (Reference)", "AWS Aurora PostgreSQL database.")
-        
-        submit_btn = st.form_submit_button("Execute Real-Time Assessment")
-        
-        if submit_btn:
-            with st.spinner("Executing custom evaluator..."):
-                try:
-                    contexts_list = [c.strip() for c in play_contexts.split("\n") if c.strip()]
-
-                    # Assemble request
-                    rag_in = {
-                        "query": play_query,
-                        "contexts": contexts_list,
-                        "generated_answer": play_answer,
-                        "ground_truth_answer": play_ground_truth
-                    }
-
-                    hal_in = {
-                        "generated_answer": play_answer,
-                        "evidence_texts": contexts_list
-                    }
-
-                    evaluator = create_ai_evaluator()
-                    custom_report = evaluator.run_evaluation(
-                        rag_data=rag_in,
-                        hallucination_data=hal_in
-                    )
-
-                    st.success("Custom evaluation run complete!")
-
-                    st.markdown("### Resulting Metrics")
-                    res_col1, res_col2 = st.columns(2)
-                    with res_col1:
-                        st.write(f"**Overall Score:** {custom_report.overall_score:.2f}")
-                        st.write(f"**RAG Faithfulness:** {custom_report.rag.faithfulness if custom_report.rag else 0.0}")
-                        st.write(f"**RAG Answer Relevancy:** {custom_report.rag.answer_relevancy if custom_report.rag else 0.0}")
-                    with res_col2:
-                        st.write(f"**Hallucination Rate:** {custom_report.hallucination.hallucination_rate if custom_report.hallucination else 0.0}%")
-                        st.write(f"**Latency:** {custom_report.performance.latency_ms:.1f} ms")
-                        st.write(f"**Cost:** ${custom_report.performance.cost_usd:.5f}")
-                except Exception as exc:
-                    show_optional_evaluator_error(exc)
-
