@@ -1272,6 +1272,7 @@ def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -
     columns = [
         "Member / Team",
         "Submitter",
+        "AI Score /100",
         "Reviews Completed",
         "Total Score",
         "Avg Score /20",
@@ -1282,7 +1283,7 @@ def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -
 
     base_columns = [
         column
-        for column in ["submission_id", "project_name", "submitter_name"]
+        for column in ["submission_id", "project_name", "submitter_name", "ai_score"]
         if column in submissions.columns
     ]
     projects = submissions[base_columns].copy()
@@ -1317,6 +1318,11 @@ def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -
     projects["Reviews Completed"] = pd.to_numeric(projects.get("Reviews Completed"), errors="coerce").fillna(0).astype(int)
     projects["Total Score"] = pd.to_numeric(projects.get("Total Score"), errors="coerce")
     projects["Avg Score /20"] = pd.to_numeric(projects.get("Avg Score /20"), errors="coerce")
+    projects["AI Score /100"] = (
+        pd.to_numeric(projects["ai_score"], errors="coerce")
+        if "ai_score" in projects.columns
+        else np.nan
+    )
     projects["Member / Team"] = projects.get("project_name", pd.Series(dtype=str)).fillna("Untitled project")
     projects["Submitter"] = projects.get("submitter_name", pd.Series(dtype=str)).fillna("Unknown submitter")
     projects["Last Review"] = projects.get("Last Review", pd.Series(dtype=str)).fillna("")
@@ -2173,6 +2179,7 @@ def render_admin_dashboard(judge_email: str) -> None:
                 with st.container(border=True):
                     st.subheader(f"#{index} {row['Member / Team']}")
                     st.metric("Avg Score /20", format_optional_number(row["Avg Score /20"]))
+                    st.metric("AI Score /100", format_optional_number(row["AI Score /100"]))
                     st.caption(
                         f"Total {format_optional_number(row['Total Score'])} across "
                         f"{int(row['Reviews Completed'])} review(s)"
@@ -2181,6 +2188,7 @@ def render_admin_dashboard(judge_email: str) -> None:
     st.markdown('<div class="section-header">Member / Team Scoreboard</div>', unsafe_allow_html=True)
     project_display = project_scores.copy()
     if not project_display.empty:
+        project_display["AI Score /100"] = pd.to_numeric(project_display["AI Score /100"], errors="coerce").round(1)
         project_display["Total Score"] = pd.to_numeric(project_display["Total Score"], errors="coerce").round(1)
         project_display["Avg Score /20"] = pd.to_numeric(project_display["Avg Score /20"], errors="coerce").round(1)
     st.dataframe(project_display, use_container_width=True, hide_index=True)
