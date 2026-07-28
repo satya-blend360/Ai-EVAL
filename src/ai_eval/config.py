@@ -35,7 +35,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "openai").lower()
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4o-mini")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 USE_MOCK_FALLBACK = os.getenv("USE_MOCK_FALLBACK", "True").lower() in ("true", "1", "yes")
 
 # Directories

@@ -206,11 +206,13 @@ class LLMProvider:
         except ImportError as exc:
             raise RuntimeError("langchain-anthropic is not installed. Run `pip install -r requirements.txt`.") from exc
 
-        chat = ChatAnthropic(
-            model=model,
-            anthropic_api_key=ANTHROPIC_API_KEY,
-            temperature=temperature
-        )
+        chat_kwargs = {
+            "model": model,
+            "anthropic_api_key": ANTHROPIC_API_KEY,
+        }
+        if not model.startswith(("claude-fable-5", "claude-opus-5", "claude-sonnet-5")):
+            chat_kwargs["temperature"] = temperature
+        chat = ChatAnthropic(**chat_kwargs)
 
         structured_llm = chat.with_structured_output(response_model)
 
@@ -245,6 +247,8 @@ class LLMProvider:
             "gpt-4o-mini": (0.150 / 1_000_000, 0.600 / 1_000_000),
             "gpt-4-turbo": (10.00 / 1_000_000, 30.00 / 1_000_000),
             "gpt-3.5-turbo": (0.50 / 1_000_000, 1.50 / 1_000_000),
+            "claude-sonnet-5": (3.00 / 1_000_000, 15.00 / 1_000_000),
+            "claude-opus-5": (5.00 / 1_000_000, 25.00 / 1_000_000),
             "claude-3-5-sonnet": (3.00 / 1_000_000, 15.00 / 1_000_000),
             "claude-3-opus": (15.00 / 1_000_000, 75.00 / 1_000_000),
             "claude-3-haiku": (0.25 / 1_000_000, 1.25 / 1_000_000),
