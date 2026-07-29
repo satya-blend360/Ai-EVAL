@@ -309,36 +309,68 @@ DB_PREFIX = f"{DB_CATALOG}.{DB_SCHEMA}"
 JUDGE_READY_QUESTIONS_PATH = Path(APP_ROOT) / "judge_ready_evaluation_questions.md"
 PIH_HACKATHON_DOC_PATH = Path(APP_ROOT) / "pih_hackathon_design_qa_extracted.md"
 
+PIH_SCORE_LEVEL_NAMES = {1: "Underachieving", 2: "Average", 3: "Proficient", 4: "Exceptional"}
+
 PIH_SCORE_FIELDS = [
     {
         "storage_key": "accuracy",
         "display": "Creativity, insight & relevance",
         "short": "Creativity",
         "help": "1: loosely tied to the project-knowledge problem. 2: straightforward but familiar. 3: clear solution with useful creative features. 4: highly original, thoughtful, and grounded in real user need.",
+        "levels": {
+            1: "Idea is basic, unclear, or only loosely tied to the project-knowledge problem.",
+            2: "Addresses the problem in a straightforward way, but the approach feels familiar or limited in originality.",
+            3: "Clearly solves the problem and adds creative features, workflows, or use cases that improve it.",
+            4: "Solves it in a highly original, thoughtful way. Shows deep insight into the real user need and stands out from typical approaches.",
+        },
     },
     {
         "storage_key": "completeness",
         "display": "Answering from existing materials",
         "short": "Grounded answers",
         "help": "1: answers absent, wrong, or ungrounded. 2: some answers but weak coverage or sourcing. 3: reliable answers grounded in files with visible sources. 4: accurate held-out answers and works beyond the test phrasing.",
+        "levels": {
+            1: "Little or no working retrieval; test-set answers are absent, wrong, or ungrounded.",
+            2: "Answers some of the test set from the files, but coverage is thin and grounding to sources is weak or unclear.",
+            3: "Reliably answers a range of the test set, grounded in the provided materials, with visible sourcing.",
+            4: "Answers the held-out test set accurately and grounded, and clearly works beyond it — handling questions, phrasings, or materials it was never shown, rather than fitting to the test set.",
+        },
     },
     {
         "storage_key": "presentation",
         "display": "Gap-flagging & knowledge capture",
         "short": "Gap capture",
         "help": "1: gaps are not handled. 2: gaps are flagged but guidance or persistence is weak. 3: flags gaps, suggests who/how to close them, and captures answers. 4: smooth flag-guide-capture-persist loop.",
+        "levels": {
+            1: "No handling of unanswerable questions; gaps go unflagged and nothing is captured.",
+            2: "Flags some gaps, but guidance is generic and captured info doesn't reliably persist.",
+            3: "Flags gaps, suggests how to close them (e.g. names the lead), and captures answers that persist to future sessions.",
+            4: "A smooth flag → guide → capture → persist loop that demonstrably enriches the system, with thoughtful UX around who to ask and how info re-enters.",
+        },
     },
     {
         "storage_key": "business_impact",
         "display": "Usable experience (MVP)",
         "short": "Usability",
         "help": "1: mostly concept; hard to use. 2: works but rough. 3: usable core workflow in chat, Cowork, agent, skill, or UI. 4: smooth, complete end-to-end experience.",
+        "levels": {
+            1: "More concept than product; a user would struggle to understand or use it.",
+            2: "Works in a limited way, but the experience is rough or needs the team to explain it.",
+            3: "Usable and demonstrates the core experience clearly; a user can complete the main workflow (chat, Cowork, or UI).",
+            4: "Feels like a complete, usable product or way of working — intuitive and smooth end-to-end, whatever the interface.",
+        },
     },
     {
         "storage_key": "technical_quality",
         "display": "Impact & potential",
         "short": "Impact",
         "help": "1: limited practical value. 2: some potential but unclear audience or scale. 3: clear real-world value. 4: strong path to a scalable Blend tool.",
+        "levels": {
+            1: "Limited practical value or unclear future use; hard to expand or apply at Blend.",
+            2: "Some useful potential, but audience, scale, or real-world application aren't fully developed.",
+            3: "Clear real-world value; could grow into a more complete tool with more time or resources.",
+            4: "Strong potential to become a real, scalable Blend tool — important need, clear audience, realistic path to adoption.",
+        },
     },
 ]
 PIH_SCORE_MAX = len(PIH_SCORE_FIELDS) * 4
@@ -827,7 +859,10 @@ def render_scorecard_content() -> None:
     for field in PIH_SCORE_FIELDS:
         with st.container(border=True):
             st.markdown(f"#### {field['display']}")
-            st.write(field["help"])
+            for level in (1, 2, 3, 4):
+                st.markdown(
+                    f"**{level} · {PIH_SCORE_LEVEL_NAMES[level]}** — {field['levels'][level]}"
+                )
 
     st.markdown("#### What Judges Should Look For")
     st.write("Grounded answers with the source visible, a quick accuracy tally, and a flag-guide-capture-persist loop for unanswered questions.")
@@ -2184,6 +2219,59 @@ def render_semantic_correctness_section(submission_json: str, submission_id: str
         st.rerun()
 
 
+@st.dialog("AI Evaluation Metrics", width="large")
+def render_evaluation_dialog(selected: Dict[str, Any]) -> None:
+    """Popup that gathers all evaluation metrics for a submission in one place."""
+    st.subheader(selected.get("project_name") or "Untitled project")
+
+    ai_score = selected.get("ai_score")
+    st.metric("Overall AI Score", "N/A" if pd.isna(ai_score) else f"{float(ai_score):.1f}/100")
+    st.info(
+        selected.get("ai_summary")
+        or "AI evaluation has not been run yet. Use “Run AI evaluation for this project”."
+    )
+
+    st.markdown("---")
+    st.markdown("#### AI Semantic Correctness")
+    render_semantic_correctness_section(
+        selected.get("submission_json") or "",
+        str(selected.get("submission_id") or ""),
+    )
+
+
+def render_floating_eval_button(selected: Dict[str, Any]) -> None:
+    """Render a fixed floating button that opens the evaluation metrics popup."""
+    st.markdown(
+        """
+        <style>
+            .st-key-floating_eval_btn {
+                position: fixed;
+                right: 32px;
+                bottom: 32px;
+                z-index: 1000;
+                width: auto;
+            }
+            .st-key-floating_eval_btn button {
+                border-radius: 999px;
+                padding: 0.8rem 1.5rem;
+                font-weight: 700;
+                color: #ffffff;
+                border: none;
+                background: linear-gradient(135deg, #14b8a6, #0ea5e9);
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            }
+            .st-key-floating_eval_btn button:hover {
+                filter: brightness(1.08);
+                color: #ffffff;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("📊 View Evaluation", key="floating_eval_btn"):
+        render_evaluation_dialog(selected)
+
+
 def render_screenshots(screenshots_json: str) -> None:
     screenshots = [
         item
@@ -3143,6 +3231,7 @@ def render_judge_portal(judge_email: str) -> None:
                 st.success(f"You reviewed this project. Your score: {float(review.get('total_score') or 0):.1f}/20")
             else:
                 st.info("You have not reviewed this project yet.")
+        render_floating_eval_button(selected)
     else:
         st.markdown('<div class="section-header">All Submissions</div>', unsafe_allow_html=True)
         filter_col, status_col = st.columns([0.65, 0.35])
@@ -3245,40 +3334,19 @@ def render_judge_portal(judge_email: str) -> None:
         if st.button("Run AI evaluation for this project", use_container_width=True):
             with st.spinner("Running AI evaluation..."):
                 try:
-                    fallback_reason = ""
-                    submission_url = (selected.get("submission_url") or "").strip()
-                    report = None
-                    if submission_url:
-                        try:
-                            report = run_live_prototype_evaluation(
-                                submission_url,
-                                member_name=selected.get("project_name"),
-                            )
-                        except Exception as live_exc:
-                            # The submitted URL is usually a demo/app/repo link, not the exact
-                            # grading API with /api/eval/* POST endpoints. Any live-eval failure
-                            # (timeout, 4xx/5xx, connection, non-JSON, missing endpoints) should
-                            # gracefully fall back to the standard local benchmark, which works
-                            # offline. We only report a hard error if that also fails.
-                            fallback_reason = (
-                                "Could not evaluate the submitted URL directly "
-                                f"({type(live_exc).__name__}: {str(live_exc)[:200]}). "
-                                "Used the standard local benchmark instead."
-                            )
-                            report = run_standard_submission_evaluation(selected)
-                    else:
-                        report = run_standard_submission_evaluation(selected)
+                    # AI evaluation never touches the submission URL — it grades the
+                    # standard local benchmark only (no network calls to the prototype).
+                    report = run_standard_submission_evaluation(selected)
 
                     ai_summary = (
-                        f"{fallback_reason} " if fallback_reason else ""
-                    ) + f"AI evaluation completed with run ID {report.run_id}. Overall score: {report.overall_score:.1f}/100."
+                        f"AI evaluation completed with run ID {report.run_id}. "
+                        f"Overall score: {report.overall_score:.1f}/100."
+                    )
                     update_ai_result(
                         selected_id,
                         report.overall_score,
                         ai_summary,
                     )
-                    if fallback_reason:
-                        st.warning(fallback_reason)
                     st.success(f"AI evaluation saved. Overall score: {report.overall_score:.1f}/100.")
                     st.rerun()
                 except Exception as exc:
@@ -3287,6 +3355,7 @@ def render_judge_portal(judge_email: str) -> None:
     with score_col:
         st.markdown('<div class="section-header">Your Marks</div>', unsafe_allow_html=True)
         st.caption("PIH Hackathon scorecard: five criteria, 1-4 points each, 20 points total.")
+        st.caption("Scale: 1 Underachieving · 2 Average · 3 Proficient · 4 Exceptional")
         current_score = load_my_score(selected_id, judge_email)
         with st.form("judge_score_form"):
             score_values = {}
@@ -3299,6 +3368,11 @@ def render_judge_portal(judge_email: str) -> None:
                     1,
                     help=field["help"],
                 )
+                with st.expander(f"Scoring guide — {field['display']}"):
+                    for level in (1, 2, 3, 4):
+                        st.markdown(
+                            f"**{level} · {PIH_SCORE_LEVEL_NAMES[level]}** — {field['levels'][level]}"
+                        )
             total_preview = pih_total_score(score_values)
             st.metric("Total score", f"{total_preview:.0f}/20")
             comments = st.text_area("Comments", value=current_score.get("comments") or "", height=140)
