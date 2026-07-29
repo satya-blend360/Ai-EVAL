@@ -2163,7 +2163,9 @@ def render_correctness_assessment(
     render_semantic_correctness_section(submission_json, submission_id)
 
 
-def render_semantic_correctness_section(submission_json: str, submission_id: str = "") -> None:
+def render_semantic_correctness_section(
+    submission_json: str, submission_id: str = "", context: str = "inline"
+) -> None:
     """AI (semantic) correctness scoring for the current submission.
 
     Runs automatically (and is cached per submission) so judges always see a
@@ -2214,7 +2216,7 @@ def render_semantic_correctness_section(submission_json: str, submission_id: str
             hide_index=True,
         )
 
-    if st.button("Re-grade with AI", key=f"ai_regrade_{cache_key}"):
+    if st.button("Re-grade with AI", key=f"ai_regrade_{context}_{cache_key}"):
         cache.pop(cache_key, None)
         st.rerun()
 
@@ -2236,6 +2238,7 @@ def render_evaluation_dialog(selected: Dict[str, Any]) -> None:
     render_semantic_correctness_section(
         selected.get("submission_json") or "",
         str(selected.get("submission_id") or ""),
+        context="dialog",
     )
 
 
