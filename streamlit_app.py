@@ -918,6 +918,46 @@ def parse_submission_payload(submission_json: str) -> Any:
     return text
 
 
+ANSWER_FIELD_KEYS = ["answer", "submitted_answer", "response", "output", "value", "text", "result"]
+QUESTION_FIELD_KEYS = ["question", "prompt", "title", "name", "q"]
+ID_FIELD_KEYS = ["question_number", "question_id", "id", "number", "qid"]
+
+
+def ci_get(record: Dict[str, Any], keys: List[str]) -> Any:
+    """Case-insensitive lookup of the first present, non-empty key."""
+    lowered = {str(k).strip().lower(): v for k, v in record.items()}
+    for key in keys:
+        value = lowered.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def match_question_number_by_text(question_text: str, key: List[Dict[str, Any]]) -> Optional[int]:
+    """Match a submitted question to a key question by text similarity.
+
+    Lets us line up answers even when the participant used their own wording and
+    no question numbers, as long as the question text is recognizably similar.
+    """
+    from difflib import SequenceMatcher
+
+    target = normalize_text(question_text)
+    if not target:
+        return None
+    best_qn, best_ratio = None, 0.0
+    for expected in key:
+        candidate = normalize_text(expected.get("question", ""))
+        if not candidate:
+            continue
+        ratio = SequenceMatcher(None, target, candidate).ratio()
+        # Boost when one clearly contains the other (paraphrase / trailing text).
+        if target in candidate or candidate in target:
+            ratio = max(ratio, 0.9)
+        if ratio > best_ratio:
+            best_ratio, best_qn = ratio, expected["question_number"]
+    return best_qn if best_ratio >= 0.6 else None
+
+
 def extract_qa_pairs(submission_json: str) -> List[Dict[str, str]]:
     """Return a best-effort list of {'label', 'answer'} pairs for display.
 
@@ -928,83 +968,84 @@ def extract_qa_pairs(submission_json: str) -> List[Dict[str, str]]:
     if payload is None or isinstance(payload, str):
         return []
     container = find_nested_answer_container(payload)
-    answer_keys = ["answer", "submitted_answer", "response", "output", "value", "text"]
-    question_keys = ["question", "prompt", "q", "title", "name"]
     pairs: List[Dict[str, str]] = []
 
     if isinstance(container, list):
         for position, item in enumerate(container, start=1):
             if isinstance(item, dict):
-                label = next((str(item[k]) for k in question_keys if item.get(k)), f"Item {position}")
-                answer = next((item[k] for k in answer_keys if item.get(k) not in (None, "")), None)
+                label = ci_get(item, QUESTION_FIELD_KEYS) or f"Item {position}"
+                answer = ci_get(item, ANSWER_FIELD_KEYS)
                 if answer is None and len(item) == 1:
                     only_key, only_value = next(iter(item.items()))
                     label, answer = str(only_key), only_value
                 if answer is None:
                     answer = item
-                pairs.append({"label": label, "answer": stringify_answer(answer)})
+                pairs.append({"label": str(label), "answer": stringify_answer(answer)})
             else:
                 pairs.append({"label": f"Item {position}", "answer": stringify_answer(item)})
     elif isinstance(container, dict):
         for key, value in container.items():
             if isinstance(value, dict):
-                answer = next((value[k] for k in answer_keys if value.get(k) not in (None, "")), value)
-                pairs.append({"label": str(key), "answer": stringify_answer(answer)})
+                answer = ci_get(value, ANSWER_FIELD_KEYS)
+                pairs.append({"label": str(key), "answer": stringify_answer(answer if answer is not None else value)})
             else:
                 pairs.append({"label": str(key), "answer": stringify_answer(value)})
     return pairs
 
 
 def extract_submitted_answers(submission_json: str) -> Dict[int, str]:
+    """Map submitted answers to question numbers, tolerant of format differences.
+
+    Handles: numbered questions, case-insensitive keys (e.g. "Question"/"Answer"),
+    and participant-worded questions with no numbers (matched to the key by text).
+    """
     if not submission_json:
         return {}
     payload = parse_submission_payload(submission_json)
     if payload is None or isinstance(payload, str):
         return {}
     payload = find_nested_answer_container(payload)
-    answers: Dict[int, str] = {}
 
+    # Collect raw records as (explicit_id, question_text, answer, position).
+    records: List[tuple] = []
     if isinstance(payload, list):
         for position, item in enumerate(payload, start=1):
             if isinstance(item, dict):
-                raw_id = (
-                    item.get("question_number")
-                    or item.get("question_id")
-                    or item.get("id")
-                    or item.get("number")
-                    or item.get("q")
-                    or position
-                )
-                answer = (
-                    item.get("answer")
-                    or item.get("submitted_answer")
-                    or item.get("response")
-                    or item.get("output")
-                    or item.get("value")
-                    or ""
-                )
+                raw_id = ci_get(item, ID_FIELD_KEYS)
+                qtext = ci_get(item, QUESTION_FIELD_KEYS)
+                answer = ci_get(item, ANSWER_FIELD_KEYS)
+                if answer is None and len(item) == 1:
+                    only_key, only_value = next(iter(item.items()))
+                    qtext, answer = str(only_key), only_value
+                records.append((raw_id, qtext, answer, position))
             else:
-                raw_id = position
-                answer = item
-            question_number = parse_question_number(raw_id, position)
-            answers[question_number] = str(answer)
-        return answers
-
-    if isinstance(payload, dict):
+                records.append((position, None, item, position))
+    elif isinstance(payload, dict):
         for position, (key, value) in enumerate(payload.items(), start=1):
-            question_number = parse_question_number(key, position)
             if isinstance(value, dict):
-                answer = (
-                    value.get("answer")
-                    or value.get("submitted_answer")
-                    or value.get("response")
-                    or value.get("output")
-                    or value.get("value")
-                    or ""
-                )
+                raw_id = ci_get(value, ID_FIELD_KEYS) or key
+                qtext = ci_get(value, QUESTION_FIELD_KEYS) or str(key)
+                answer = ci_get(value, ANSWER_FIELD_KEYS)
+                records.append((raw_id, qtext, answer if answer is not None else value, position))
             else:
-                answer = value
-            answers[question_number] = str(answer)
+                records.append((key, str(key), value, position))
+    else:
+        return {}
+
+    key = load_correct_answer_key()
+    answers: Dict[int, str] = {}
+    for raw_id, qtext, answer, position in records:
+        question_number = None
+        # 1. Trust an explicit numeric id.
+        if raw_id is not None and (isinstance(raw_id, (int, float)) or re.search(r"\d", str(raw_id))):
+            question_number = parse_question_number(raw_id, position)
+        # 2. Otherwise match the question text against the answer key.
+        if question_number is None and qtext and key:
+            question_number = match_question_number_by_text(str(qtext), key)
+        # 3. Fall back to positional order.
+        if question_number is None:
+            question_number = position
+        answers[question_number] = stringify_answer(answer)
     return answers
 
 
