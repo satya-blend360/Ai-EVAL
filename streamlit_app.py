@@ -2107,7 +2107,6 @@ def render_submission_json(submission_json: str) -> None:
     is_clean_json = not isinstance(payload, str)
 
     if submitted_answers:
-        st.success("JSON payload submitted. Raw JSON is hidden from the judge page.")
         st.caption(f"{len(submitted_answers)} answer(s) detected. Use the comparison below for review.")
     else:
         # Non-standard / unmatched format: still surface everything for the judge.
