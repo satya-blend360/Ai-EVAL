@@ -50,6 +50,13 @@ def create_ai_evaluator():
     return AIEvaluator()
 
 
+def get_llm_provider():
+    reset_ai_eval_import_cache()
+    from ai_eval.utils.llm import LLMProvider
+
+    return LLMProvider()
+
+
 def load_evaluation_dataset():
     reset_ai_eval_import_cache()
     from ai_eval.data.loader import load_evaluation_data
@@ -846,12 +853,113 @@ def find_nested_answer_container(payload: Any) -> Any:
     return payload
 
 
+def stringify_answer(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    return str(value)
+
+
+def parse_submission_payload(submission_json: str) -> Any:
+    """Best-effort parse of a submitted payload that may not be clean JSON.
+
+    Participants sometimes submit JSON wrapped in markdown fences, with trailing
+    prose, single quotes, or as JSON-lines. We try progressively looser strategies
+    so judges can still see the content instead of an empty page.
+    Returns a dict/list when possible, otherwise the raw string, or None if empty.
+    """
+    if not submission_json:
+        return None
+    text = submission_json.strip()
+
+    # 1. Clean JSON.
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # 2. Strip a leading/trailing markdown code fence (```json ... ```).
+    fenced = re.sub(r"^```[a-zA-Z0-9]*\s*", "", text)
+    fenced = re.sub(r"\s*```$", "", fenced).strip()
+    if fenced and fenced != text:
+        try:
+            return json.loads(fenced)
+        except Exception:
+            text = fenced
+
+    # 3. Grab the largest {...} or [...] block and try that.
+    candidates = []
+    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+        start = text.find(open_ch)
+        end = text.rfind(close_ch)
+        if 0 <= start < end:
+            candidates.append(text[start : end + 1])
+    for snippet in candidates:
+        try:
+            return json.loads(snippet)
+        except Exception:
+            continue
+
+    # 4. JSON-lines: one JSON object per line.
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) > 1:
+        objs = []
+        for line in lines:
+            try:
+                objs.append(json.loads(line))
+            except Exception:
+                objs = []
+                break
+        if objs:
+            return objs
+
+    # 5. Give up on JSON; hand back the raw text so it can still be shown.
+    return text
+
+
+def extract_qa_pairs(submission_json: str) -> List[Dict[str, str]]:
+    """Return a best-effort list of {'label', 'answer'} pairs for display.
+
+    Works even when answers can't be mapped to numbered questions, so judges
+    can read non-standard submissions.
+    """
+    payload = parse_submission_payload(submission_json)
+    if payload is None or isinstance(payload, str):
+        return []
+    container = find_nested_answer_container(payload)
+    answer_keys = ["answer", "submitted_answer", "response", "output", "value", "text"]
+    question_keys = ["question", "prompt", "q", "title", "name"]
+    pairs: List[Dict[str, str]] = []
+
+    if isinstance(container, list):
+        for position, item in enumerate(container, start=1):
+            if isinstance(item, dict):
+                label = next((str(item[k]) for k in question_keys if item.get(k)), f"Item {position}")
+                answer = next((item[k] for k in answer_keys if item.get(k) not in (None, "")), None)
+                if answer is None and len(item) == 1:
+                    only_key, only_value = next(iter(item.items()))
+                    label, answer = str(only_key), only_value
+                if answer is None:
+                    answer = item
+                pairs.append({"label": label, "answer": stringify_answer(answer)})
+            else:
+                pairs.append({"label": f"Item {position}", "answer": stringify_answer(item)})
+    elif isinstance(container, dict):
+        for key, value in container.items():
+            if isinstance(value, dict):
+                answer = next((value[k] for k in answer_keys if value.get(k) not in (None, "")), value)
+                pairs.append({"label": str(key), "answer": stringify_answer(answer)})
+            else:
+                pairs.append({"label": str(key), "answer": stringify_answer(value)})
+    return pairs
+
+
 def extract_submitted_answers(submission_json: str) -> Dict[int, str]:
     if not submission_json:
         return {}
-    try:
-        payload = json.loads(submission_json)
-    except Exception:
+    payload = parse_submission_payload(submission_json)
+    if payload is None or isinstance(payload, str):
         return {}
     payload = find_nested_answer_container(payload)
     answers: Dict[int, str] = {}
@@ -953,6 +1061,111 @@ def score_submission_against_key(submission_json: str) -> Dict[str, Any]:
         "details": details,
         "correct_answers": key,
     }
+
+
+def compute_semantic_correctness(submission_json: str) -> Dict[str, Any]:
+    """AI (semantic) correctness scoring for a single submission.
+
+    Uses the LLM to judge whether each submitted answer matches the correct answer
+    in meaning rather than by keyword overlap. Meant to be run on demand per
+    participant (there are only a few dozen submissions), so cost stays low.
+    """
+    key = load_correct_answer_key()
+    submitted_answers = extract_submitted_answers(submission_json)
+    if not key:
+        return {"score": None, "summary": "No correct answer key is available.", "details": []}
+
+    def _blank_detail(expected: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "question_number": expected["question_number"],
+            "question": expected.get("question", ""),
+            "submitted_answer": "",
+            "correct_answer": expected.get("answer", ""),
+            "score": 0.0,
+            "verdict": "No answer",
+            "reasoning": "No answer was submitted for this question.",
+        }
+
+    to_grade = [
+        (expected, (submitted_answers.get(expected["question_number"], "") or "").strip())
+        for expected in key
+    ]
+    gradable = [(expected, submitted) for expected, submitted in to_grade if submitted]
+
+    if not gradable:
+        return {
+            "score": 0.0,
+            "summary": "No answers were submitted, so the AI correctness score is 0/100.",
+            "details": [_blank_detail(expected) for expected in key],
+        }
+
+    from pydantic import BaseModel, Field
+
+    class _AnswerScore(BaseModel):
+        question_number: int
+        score: float = Field(description="Semantic correctness from 0 to 100")
+        verdict: str = Field(description="Correct, Partially correct, or Incorrect")
+        reasoning: str = Field(description="One or two sentences explaining the score")
+
+    class _CorrectnessResult(BaseModel):
+        scores: List[_AnswerScore]
+
+    blocks = [
+        f"Question {expected['question_number']}: {expected.get('question', '')}\n"
+        f"Correct answer: {expected.get('answer', '')}\n"
+        f"Submitted answer: {submitted}\n"
+        for expected, submitted in gradable
+    ]
+    system_prompt = (
+        "You are a meticulous grader for a technical hackathon. Score the semantic correctness of "
+        "each submitted answer from 0 (completely wrong or missing) to 100 (fully correct)."
+    )
+    user_prompt = (
+        "Grade each submitted answer against the correct answer by MEANING, not exact wording. "
+        "A paraphrase that conveys the same facts should score high; missing or wrong facts lower the score. "
+        "Return a score from 0 to 100 for every question listed below.\n\n" + "\n".join(blocks)
+    )
+
+    provider = get_llm_provider()
+    result, _meta = provider.call_structured(system_prompt, user_prompt, _CorrectnessResult, temperature=0.0)
+    score_by_qn = {item.question_number: item for item in result.scores}
+
+    details = []
+    for expected, submitted in to_grade:
+        qn = expected["question_number"]
+        if not submitted:
+            details.append(_blank_detail(expected))
+            continue
+        graded = score_by_qn.get(qn)
+        if graded is None:
+            details.append(
+                {
+                    "question_number": qn,
+                    "question": expected.get("question", ""),
+                    "submitted_answer": submitted,
+                    "correct_answer": expected.get("answer", ""),
+                    "score": 0.0,
+                    "verdict": "Not graded",
+                    "reasoning": "The AI did not return a score for this question.",
+                }
+            )
+            continue
+        details.append(
+            {
+                "question_number": qn,
+                "question": expected.get("question", ""),
+                "submitted_answer": submitted,
+                "correct_answer": expected.get("answer", ""),
+                "score": max(0.0, min(100.0, round(float(graded.score), 2))),
+                "verdict": graded.verdict,
+                "reasoning": graded.reasoning,
+            }
+        )
+
+    overall = round(sum(detail["score"] for detail in details) / len(details), 2) if details else None
+    answered = sum(1 for detail in details if detail["submitted_answer"].strip())
+    summary = f"AI semantic score across {answered}/{len(details)} answered questions: {overall:.1f}/100."
+    return {"score": overall, "summary": summary, "details": details}
 
 
 def local_submissions() -> pd.DataFrame:
@@ -1814,11 +2027,46 @@ def render_submission_json(submission_json: str) -> None:
 
     submitted_answers = extract_submitted_answers(submission_json)
     size_kb = len(submission_json.encode("utf-8")) / 1024
-    st.success("JSON payload submitted. Raw JSON is hidden from the judge page.")
+    payload = parse_submission_payload(submission_json)
+    is_clean_json = not isinstance(payload, str)
+
     if submitted_answers:
+        st.success("JSON payload submitted. Raw JSON is hidden from the judge page.")
         st.caption(f"{len(submitted_answers)} answer(s) detected. Use the comparison below for review.")
     else:
-        st.caption("Submitted payload is stored, but no numbered answers were detected.")
+        # Non-standard / unmatched format: still surface everything for the judge.
+        if is_clean_json:
+            st.warning(
+                "This submission is valid JSON but not in the expected numbered-answer format. "
+                "Showing all submitted content below so you can still review it."
+            )
+        else:
+            st.warning(
+                "This submission could not be read as standard JSON. "
+                "Showing the raw submitted content below so you can still review it."
+            )
+        qa_pairs = extract_qa_pairs(submission_json)
+        if qa_pairs:
+            st.caption(f"{len(qa_pairs)} answer(s) detected in a non-standard layout.")
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Question / Field": pair["label"], "Submitted Answer": pair["answer"]} for pair in qa_pairs]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        with st.expander("View full submitted content", expanded=not qa_pairs):
+            if is_clean_json:
+                st.json(payload)
+            else:
+                st.text_area(
+                    "Raw submission",
+                    value=submission_json,
+                    height=300,
+                    disabled=True,
+                    key=f"raw_submission_{len(submission_json)}_{int(size_kb * 100)}",
+                )
+
     st.download_button(
         "Download submitted JSON",
         data=submission_json,
@@ -1830,7 +2078,12 @@ def render_submission_json(submission_json: str) -> None:
     )
 
 
-def render_correctness_assessment(submission_json: str, stored_summary: str = "", stored_score: Any = None) -> None:
+def render_correctness_assessment(
+    submission_json: str,
+    stored_summary: str = "",
+    stored_score: Any = None,
+    submission_id: str = "",
+) -> None:
     assessment = score_submission_against_key(submission_json)
     score = stored_score
     if score is None or pd.isna(score):
@@ -1860,6 +2113,8 @@ def render_correctness_assessment(submission_json: str, stored_summary: str = ""
         )
     st.dataframe(pd.DataFrame(answer_rows), use_container_width=True, hide_index=True)
 
+    render_semantic_correctness_section(submission_json, submission_id)
+
     with st.expander("Correct answer key and sources", expanded=False):
         for detail in details:
             st.markdown(f"**Question {detail['question_number']}**")
@@ -1868,6 +2123,71 @@ def render_correctness_assessment(submission_json: str, stored_summary: str = ""
             sources = detail.get("answer_source") or []
             if sources:
                 st.caption("Sources: " + " | ".join(sources))
+
+
+def render_semantic_correctness_section(submission_json: str, submission_id: str = "") -> None:
+    """On-demand AI (semantic) correctness scoring for the current submission.
+
+    Keyword matching can undercount answers that are correct but worded differently.
+    This lets a judge grade one participant by meaning using the LLM.
+    """
+    st.markdown("---")
+    st.markdown("**🤖 AI Semantic Correctness (optional)**")
+    st.caption(
+        "Keyword matching can miss answers that are correct but worded differently. "
+        "Run AI grading to score this participant by meaning."
+    )
+
+    cache = st.session_state.setdefault("semantic_correctness_cache", {})
+    cache_key = f"{submission_id}:{len(submission_json)}:{hash(submission_json)}"
+
+    button_col, clear_col = st.columns([1, 1])
+    run_ai = button_col.button(
+        "Score with AI (semantic)",
+        key=f"ai_score_btn_{cache_key}",
+        use_container_width=True,
+    )
+    if cache_key in cache and clear_col.button(
+        "Clear AI score", key=f"ai_clear_btn_{cache_key}", use_container_width=True
+    ):
+        cache.pop(cache_key, None)
+        st.rerun()
+
+    if run_ai:
+        with st.spinner("AI is grading the answers by meaning…"):
+            try:
+                cache[cache_key] = compute_semantic_correctness(submission_json)
+            except Exception as exc:
+                st.error(f"AI scoring failed: {exc}")
+
+    ai_result = cache.get(cache_key)
+    if not ai_result:
+        return
+
+    ai_score = ai_result.get("score")
+    st.metric("AI Semantic Correctness Score", "N/A" if ai_score is None else f"{float(ai_score):.1f}/100")
+    if ai_result.get("summary"):
+        st.info(ai_result["summary"])
+
+    ai_details = ai_result.get("details", [])
+    if ai_details:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Q#": detail["question_number"],
+                        "Submitted Answer": detail["submitted_answer"],
+                        "Correct Answer": detail["correct_answer"],
+                        "AI Score": detail["score"],
+                        "Verdict": detail.get("verdict", ""),
+                        "Reasoning": detail.get("reasoning", ""),
+                    }
+                    for detail in ai_details
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def render_screenshots(screenshots_json: str) -> None:
@@ -2911,6 +3231,7 @@ def render_judge_portal(judge_email: str) -> None:
             selected.get("submission_json") or "",
             selected.get("correctness_summary") or "",
             selected.get("correctness_score"),
+            submission_id=str(selected.get("submission_id") or ""),
         )
 
         st.markdown('<div class="section-header">Sales Brief / One-Pager</div>', unsafe_allow_html=True)
@@ -2931,17 +3252,23 @@ def render_judge_portal(judge_email: str) -> None:
             with st.spinner("Running AI evaluation..."):
                 try:
                     fallback_reason = ""
-                    if selected.get("submission_url"):
+                    submission_url = (selected.get("submission_url") or "").strip()
+                    report = None
+                    if submission_url:
                         try:
                             report = run_live_prototype_evaluation(
-                                selected["submission_url"],
+                                submission_url,
                                 member_name=selected.get("project_name"),
                             )
-                        except Exception as exc:
-                            if not should_fallback_to_standard_evaluation(exc):
-                                raise
+                        except Exception as live_exc:
+                            # The submitted URL is usually a demo/app/repo link, not the exact
+                            # grading API with /api/eval/* POST endpoints. Any live-eval failure
+                            # (timeout, 4xx/5xx, connection, non-JSON, missing endpoints) should
+                            # gracefully fall back to the standard local benchmark, which works
+                            # offline. We only report a hard error if that also fails.
                             fallback_reason = (
-                                "Prototype URL does not expose the required POST evaluation endpoints. "
+                                "Could not evaluate the submitted URL directly "
+                                f"({type(live_exc).__name__}: {str(live_exc)[:200]}). "
                                 "Used the standard local benchmark instead."
                             )
                             report = run_standard_submission_evaluation(selected)
@@ -2958,7 +3285,7 @@ def render_judge_portal(judge_email: str) -> None:
                     )
                     if fallback_reason:
                         st.warning(fallback_reason)
-                    st.success("AI evaluation saved.")
+                    st.success(f"AI evaluation saved. Overall score: {report.overall_score:.1f}/100.")
                     st.rerun()
                 except Exception as exc:
                     show_optional_evaluator_error(exc)
