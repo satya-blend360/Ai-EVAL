@@ -3425,15 +3425,14 @@ def render_judge_portal(judge_email: str) -> None:
             st.error(f"Could not load judge responses: {exc}")
 
 
-requested_page = str(st.query_params.get("page", "submit")).lower()
+requested_page = str(st.query_params.get("page", "judge")).lower()
+
+# Redirect old submission page to judge portal
+if requested_page == "submit":
+    requested_page = "judge"
 
 if not st.session_state.get("judge_logged_in"):
-    if requested_page in {"judge", "login"}:
-        st.sidebar.link_button("Open submit page", "?page=submit", use_container_width=True)
-        render_login()
-    else:
-        hide_public_submission_sidebar()
-        render_public_submission()
+    render_login()
     st.stop()
 
 judge_email = st.session_state["judge_email"]
@@ -3446,20 +3445,17 @@ if not st.session_state.get("judge_login_recorded"):
     st.session_state["judge_login_recorded"] = True
 
 st.sidebar.markdown(f"Signed in as `{judge_email}`")
-st.sidebar.link_button("Open submit page", "?page=submit", use_container_width=True)
 if st.sidebar.button("Log out", use_container_width=True):
     st.session_state.clear()
     st.rerun()
 
-view_options = ["Judge Portal", "Submit Project"]
+view_options = ["Judge Portal"]
 if is_admin_email(judge_email):
     view_options.append("Admin Dashboard")
 view_options.append("AI Evaluation Dashboard")
 
 default_view = "Judge Portal"
-if requested_page == "submit":
-    default_view = "Submit Project"
-elif requested_page == "admin" and "Admin Dashboard" in view_options:
+if requested_page == "admin" and "Admin Dashboard" in view_options:
     default_view = "Admin Dashboard"
 elif requested_page in {"ai", "dashboard", "evaluation"}:
     default_view = "AI Evaluation Dashboard"
@@ -3472,10 +3468,6 @@ portal_view = st.sidebar.radio(
 
 if portal_view == "Judge Portal":
     render_judge_portal(judge_email)
-    st.stop()
-
-if portal_view == "Submit Project":
-    render_public_submission()
     st.stop()
 
 if portal_view == "Admin Dashboard":
