@@ -2125,81 +2125,30 @@ def render_correctness_assessment(
     stored_score: Any = None,
     submission_id: str = "",
 ) -> None:
-    assessment = score_submission_against_key(submission_json)
-    score = stored_score
-    if score is None or pd.isna(score):
-        score = assessment.get("score")
-    summary = stored_summary or assessment.get("summary", "")
-    st.metric("Automatic Correctness Score", "N/A" if score is None else f"{float(score):.1f}/100")
-    if summary:
-        st.info(summary)
-
-    details = assessment.get("details", [])
-    if not details:
-        st.caption("No answer comparison is available.")
-        return
-
-    answer_rows = []
-    for detail in details:
-        answer_rows.append(
-            {
-                "Q#": detail["question_number"],
-                "Question": detail["question"],
-                "Submitted Answer": detail["submitted_answer"],
-                "Correct Answer": detail["correct_answer"],
-                "Score": detail["score"],
-                "Matched Keywords": ", ".join(detail["matched_keywords"]),
-                "Missing Keywords": ", ".join(detail["missing_keywords"]),
-            }
-        )
-    st.dataframe(pd.DataFrame(answer_rows), use_container_width=True, hide_index=True)
-
     render_semantic_correctness_section(submission_json, submission_id)
-
-    with st.expander("Correct answer key and sources", expanded=False):
-        for detail in details:
-            st.markdown(f"**Question {detail['question_number']}**")
-            st.write(detail["question"])
-            st.success(detail["correct_answer"])
-            sources = detail.get("answer_source") or []
-            if sources:
-                st.caption("Sources: " + " | ".join(sources))
 
 
 def render_semantic_correctness_section(submission_json: str, submission_id: str = "") -> None:
-    """On-demand AI (semantic) correctness scoring for the current submission.
+    """AI (semantic) correctness scoring for the current submission.
 
-    Keyword matching can undercount answers that are correct but worded differently.
-    This lets a judge grade one participant by meaning using the LLM.
+    Runs automatically (and is cached per submission) so judges always see a
+    meaning-based score without having to trigger it. The LLM judges whether each
+    submitted answer matches the correct answer in meaning, not by keyword overlap.
     """
-    st.markdown("---")
-    st.markdown("**🤖 AI Semantic Correctness (optional)**")
-    st.caption(
-        "Keyword matching can miss answers that are correct but worded differently. "
-        "Run AI grading to score this participant by meaning."
-    )
+    if not (submission_json or "").strip():
+        st.caption("No submitted answers to grade.")
+        return
 
     cache = st.session_state.setdefault("semantic_correctness_cache", {})
     cache_key = f"{submission_id}:{len(submission_json)}:{hash(submission_json)}"
 
-    button_col, clear_col = st.columns([1, 1])
-    run_ai = button_col.button(
-        "Score with AI (semantic)",
-        key=f"ai_score_btn_{cache_key}",
-        use_container_width=True,
-    )
-    if cache_key in cache and clear_col.button(
-        "Clear AI score", key=f"ai_clear_btn_{cache_key}", use_container_width=True
-    ):
-        cache.pop(cache_key, None)
-        st.rerun()
-
-    if run_ai:
+    if cache_key not in cache:
         with st.spinner("AI is grading the answers by meaning…"):
             try:
                 cache[cache_key] = compute_semantic_correctness(submission_json)
             except Exception as exc:
                 st.error(f"AI scoring failed: {exc}")
+                return
 
     ai_result = cache.get(cache_key)
     if not ai_result:
@@ -2229,6 +2178,10 @@ def render_semantic_correctness_section(submission_json: str, submission_id: str
             use_container_width=True,
             hide_index=True,
         )
+
+    if st.button("Re-grade with AI", key=f"ai_regrade_{cache_key}"):
+        cache.pop(cache_key, None)
+        st.rerun()
 
 
 def render_screenshots(screenshots_json: str) -> None:
@@ -3267,7 +3220,7 @@ def render_judge_portal(judge_email: str) -> None:
         st.markdown('<div class="section-header">Submitted JSON</div>', unsafe_allow_html=True)
         render_submission_json(selected.get("submission_json") or "")
 
-        st.markdown('<div class="section-header">Correct Answer Comparison</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">AI Semantic Correctness</div>', unsafe_allow_html=True)
         render_correctness_assessment(
             selected.get("submission_json") or "",
             selected.get("correctness_summary") or "",
