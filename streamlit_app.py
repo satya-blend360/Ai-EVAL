@@ -2355,6 +2355,26 @@ def render_docx_preview(file_bytes: bytes, name: str) -> None:
     )
 
 
+def get_sales_brief_bytes(screenshots_json: str) -> Optional[tuple]:
+    """Extract first sales brief file as (name, bytes) or return None."""
+    sales_briefs = [
+        item
+        for item in decode_screenshots(screenshots_json)
+        if item.get("category") == "sales_brief"
+    ]
+    if not sales_briefs:
+        return None
+
+    sales_brief = sales_briefs[0]
+    name = sales_brief.get("name", "sales_brief")
+    encoded = sales_brief.get("data_base64", "")
+    try:
+        file_bytes = base64.b64decode(encoded)
+        return (name, file_bytes)
+    except Exception:
+        return None
+
+
 def render_sales_brief_upload(screenshots_json: str) -> None:
     sales_briefs = [
         item
@@ -2365,41 +2385,15 @@ def render_sales_brief_upload(screenshots_json: str) -> None:
         st.caption("No sales brief file submitted.")
         return
 
-    for index, sales_brief in enumerate(sales_briefs):
+    for sales_brief in sales_briefs:
         name = sales_brief.get("name", "sales_brief")
-        mime_type = sales_brief.get("mime_type", "application/octet-stream")
         encoded = sales_brief.get("data_base64", "")
         try:
             file_bytes = base64.b64decode(encoded)
+            file_size = format_file_size(len(file_bytes))
+            st.caption(f"📄 {name} ({file_size})")
         except Exception:
             st.caption(f"{name}: could not decode file data.")
-            continue
-
-        file_suffix = Path(name).suffix.lower()
-        image_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
-        if mime_type.startswith("image/") or file_suffix in image_suffixes:
-            st.image(file_bytes, caption=name, use_container_width=True)
-        elif mime_type == "application/pdf" or file_suffix == ".pdf":
-            st.caption(name)
-            render_pdf_preview(file_bytes, name)
-        elif (
-            mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            or file_suffix == ".docx"
-        ):
-            st.caption(name)
-            render_docx_preview(file_bytes, name)
-        elif mime_type.startswith("text/") or file_suffix in {".md", ".txt"}:
-            st.caption(name)
-            st.text_area(
-                "Sales brief preview",
-                value=file_bytes.decode("utf-8", errors="replace"),
-                height=560,
-                disabled=True,
-                label_visibility="collapsed",
-                key=f"sales_brief_text_preview_{index}_{len(file_bytes)}",
-            )
-        else:
-            st.warning(f"{name}: this file type cannot be previewed in the judge portal.")
 
 
 def render_public_submission() -> None:
@@ -2622,12 +2616,7 @@ def show_video_or_link(video_url: str) -> None:
     if not video_url:
         st.caption("No video URL submitted.")
         return
-    st.link_button("Open submitted video", video_url, use_container_width=True)
-    preview_url = normalize_video_url(video_url)
-    try:
-        components.iframe(preview_url, height=360, scrolling=True)
-    except Exception:
-        st.caption("Video preview could not be embedded. Use the link above.")
+    st.link_button("Open demo video", video_url, use_container_width=True)
 
 
 def format_optional_number(value: Any, suffix: str = "", decimals: int = 1) -> str:
@@ -3223,17 +3212,46 @@ def render_judge_portal(judge_email: str) -> None:
             st.rerun()
         selected_id = selected_review_id
         selected = selected_rows.iloc[0].to_dict()
-        back_col, status_col = st.columns([0.2, 0.8])
-        with back_col:
-            if st.button("Back", use_container_width=True):
+
+        # Top navigation and status bar
+        top_col1, top_col2 = st.columns([0.1, 0.9])
+        with top_col1:
+            if st.button("← Back", use_container_width=True, key="back_to_list"):
                 st.session_state.pop("selected_review_submission_id", None)
                 st.rerun()
-        with status_col:
+        with top_col2:
             review = my_score_by_submission.get(selected_id)
             if review:
                 st.success(f"You reviewed this project. Your score: {float(review.get('total_score') or 0):.1f}/20")
             else:
                 st.info("You have not reviewed this project yet.")
+
+        # Three action buttons at top
+        action_cols = st.columns(3)
+        with action_cols[0]:
+            if selected.get("video_url"):
+                st.link_button("▶ Open video", selected["video_url"], use_container_width=True)
+            else:
+                st.button("▶ Open video", disabled=True, use_container_width=True)
+        with action_cols[1]:
+            brief_data = get_sales_brief_bytes(selected.get("screenshots_json") or "")
+            if brief_data:
+                name, file_bytes = brief_data
+                st.download_button(
+                    "📄 Open one-pager",
+                    data=file_bytes,
+                    file_name=name,
+                    use_container_width=True,
+                )
+            else:
+                st.button("📄 Open one-pager", disabled=True, use_container_width=True)
+        with action_cols[2]:
+            if selected.get("submission_url"):
+                st.link_button("🔗 Open prototype", selected["submission_url"], use_container_width=True)
+            else:
+                st.button("🔗 Open prototype", disabled=True, use_container_width=True)
+
+        st.divider()
         render_floating_eval_button(selected)
     else:
         st.markdown('<div class="section-header">All Submissions</div>', unsafe_allow_html=True)
@@ -3277,7 +3295,10 @@ def render_judge_portal(judge_email: str) -> None:
                 top_cols = st.columns([0.5, 0.18, 0.16, 0.16])
                 with top_cols[0]:
                     st.subheader(row.get("project_name") or "Untitled project")
-                    st.caption(f"{row.get('submitter_name') or 'Unknown submitter'} | {row.get('status') or 'submitted'}")
+                    if is_admin_email(judge_email):
+                        st.caption(f"{row.get('submitter_name') or 'Unknown submitter'} | {row.get('status') or 'submitted'}")
+                    else:
+                        st.caption(f"{row.get('status') or 'submitted'}")
                     description = row.get("description") or ""
                     if description:
                         st.write(description[:240] + ("..." if len(description) > 240 else ""))
@@ -3304,10 +3325,9 @@ def render_judge_portal(judge_email: str) -> None:
     with detail_col:
         st.markdown('<div class="section-header">Submission</div>', unsafe_allow_html=True)
         st.subheader(selected.get("project_name") or "Untitled project")
+        if is_admin_email(judge_email):
+            st.caption(f"Submitter: {selected.get('submitter_name') or 'Unknown'}")
         st.write(selected.get("description") or "No description submitted.")
-        if selected.get("submission_url"):
-            st.link_button("Open prototype/submission", selected["submission_url"], use_container_width=True)
-        show_video_or_link(selected.get("video_url") or "")
 
         st.markdown('<div class="section-header">Submitted JSON</div>', unsafe_allow_html=True)
         render_submission_json(selected.get("submission_json") or "")
