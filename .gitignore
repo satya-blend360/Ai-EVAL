@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+judge_credentials.json
+!judge_credentials.example.json
 *.pem
 *.key
 *.p12

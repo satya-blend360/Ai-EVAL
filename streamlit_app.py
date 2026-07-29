@@ -242,6 +242,41 @@ def get_secret(name: str, default: str = "") -> str:
 PORTAL_PASSWORD = get_secret("JUDGE_PORTAL_PASSWORD", "123")
 COMPANY_DOMAIN = "blend360.com"
 ADMIN_JUDGE_EMAIL = "saisrisatya.padala@blend360.com"
+JUDGE_CREDENTIALS_FILE = Path(APP_ROOT) / "judge_credentials.json"
+
+
+def load_judge_credentials() -> Dict[str, str]:
+    """Return a map of lowercased judge email -> password.
+
+    Judges are added in ``judge_credentials.json`` (easiest place to add many),
+    e.g. ``{"saisrisatya.padala@blend360.com": "padala@123"}``. An optional
+    ``JUDGE_CREDENTIALS`` env var holding the same JSON mapping is also merged in.
+    When at least one credential is configured, login becomes a strict whitelist:
+    only those emails with the matching password can access the Judge Portal.
+    """
+    credentials: Dict[str, str] = {}
+
+    def _merge(raw: Any) -> None:
+        if isinstance(raw, dict):
+            for email, pwd in raw.items():
+                if email and pwd is not None:
+                    credentials[str(email).strip().lower()] = str(pwd)
+
+    try:
+        if JUDGE_CREDENTIALS_FILE.exists():
+            with open(JUDGE_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+                _merge(json.load(f))
+    except Exception:
+        pass
+
+    env_raw = get_secret("JUDGE_CREDENTIALS").strip()
+    if env_raw:
+        try:
+            _merge(json.loads(env_raw))
+        except Exception:
+            pass
+
+    return credentials
 DB_CATALOG = get_secret("DATABRICKS_CATALOG", "sandbox")
 DB_SCHEMA = get_secret("DATABRICKS_SCHEMA", "ai_eval_judge_portal")
 MAX_SCREENSHOTS = 5
@@ -536,6 +571,77 @@ def render_starter_warehouse_sidebar() -> None:
     active_target = st.session_state.get("active_warehouse_role")
     if active_target:
         st.sidebar.caption(f"Last DB connection used: {active_target}")
+
+
+def render_warehouse_wait_notice() -> None:
+    """Show judges a friendly banner + timer while the Databricks SQL warehouse spins up.
+
+    Databricks serverless SQL warehouses go to sleep after ~1 hour of inactivity, and
+    take a couple of minutes to wake back up. This surfaces that clearly so judges know
+    to wait instead of thinking the portal is broken.
+    """
+    if not warehouse_api_configured():
+        return
+
+    try:
+        warehouse = load_warehouse_status()
+    except Exception:
+        # The sidebar already surfaces detailed connection errors.
+        return
+
+    state = str(warehouse.get("state", "UNKNOWN")).upper()
+    name = warehouse.get("name") or "database server"
+    inactivity_note = (
+        "ℹ️ The server automatically goes to sleep after about **1 hour of inactivity** to save cost, "
+        "so it may need to start again if the portal was idle for a while."
+    )
+
+    if state == "RUNNING":
+        st.session_state.pop("warehouse_wait_started_at", None)
+        return
+
+    if state in {"STARTING", "RESIZING"}:
+        started_at = st.session_state.get("warehouse_wait_started_at")
+        if not started_at:
+            started_at = time.time()
+            st.session_state["warehouse_wait_started_at"] = started_at
+        elapsed = max(0, int(time.time() - started_at))
+
+        st.info(
+            f"⏳ **The {name} is starting up.** This usually takes **1–3 minutes**. "
+            "This page refreshes automatically — please wait and your projects will load shortly.\n\n"
+            f"**Waiting: {elapsed // 60}m {elapsed % 60:02d}s**"
+        )
+        st.progress(min(elapsed / 180.0, 0.99), text="Warming up the database server…")
+        st.caption(inactivity_note)
+
+        try:
+            from streamlit_autorefresh import st_autorefresh
+
+            st_autorefresh(interval=5000, key="warehouse_starting_autorefresh")
+        except Exception:
+            if st.button("Check again", key="warehouse_check_again"):
+                load_warehouse_status.clear()
+                st.rerun()
+        st.stop()
+
+    # STOPPED / DELETED / UNKNOWN -> let the judge wake it up.
+    st.session_state.pop("warehouse_wait_started_at", None)
+    st.warning(
+        f"💤 **The {name} is currently asleep.** Click the button below to wake it up — "
+        "it takes about **1–3 minutes** to be ready."
+    )
+    st.caption(inactivity_note)
+    if st.button("Start database server", type="primary", key="warehouse_wake_up"):
+        try:
+            start_warehouse()
+            st.session_state["warehouse_wait_started_at"] = time.time()
+            st.success("Starting… please wait about 1–3 minutes.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not start the server: {exc}")
+    st.stop()
+
 
 def run_db_query(query: str, parameters: Optional[Dict[str, Any]] = None, fetch: bool = False):
     if not db_configured():
@@ -2085,10 +2191,22 @@ def render_login() -> None:
         submitted = st.form_submit_button("Log in", use_container_width=True)
     if submitted:
         normalized_email = email.strip().lower()
+        credentials = load_judge_credentials()
+        error_message = None
         if not is_company_email(normalized_email):
-            st.error("Use a Blend360 company email address.")
+            error_message = "Use a Blend360 company email address."
+        elif credentials:
+            # Strict whitelist: only registered judges with the right password.
+            expected = credentials.get(normalized_email)
+            if expected is None:
+                error_message = "This email is not registered for the Judge Portal. Ask the admin to add you."
+            elif password != expected:
+                error_message = "Incorrect password."
         elif password != PORTAL_PASSWORD:
-            st.error("Incorrect password.")
+            error_message = "Incorrect password."
+
+        if error_message:
+            st.error(error_message)
         else:
             st.session_state["judge_email"] = normalized_email
             st.session_state["judge_logged_in"] = True
@@ -2158,6 +2276,8 @@ def render_admin_dashboard(judge_email: str) -> None:
     login_tracking_error = st.session_state.get("login_tracking_error")
     if login_tracking_error:
         st.warning(f"Judge login tracking could not be saved: {login_tracking_error}")
+
+    render_warehouse_wait_notice()
 
     try:
         submissions = load_submissions()
@@ -2346,6 +2466,8 @@ def render_submission_quality_dashboard(judge_email: str) -> None:
         '<div class="sub-title">Live submission, judge review, and scoring monitor.</div>',
         unsafe_allow_html=True,
     )
+
+    render_warehouse_wait_notice()
 
     try:
         submissions = load_submissions()
@@ -2644,6 +2766,8 @@ def render_judge_portal(judge_email: str) -> None:
         load_submissions.clear()
         st.rerun()
     show_ai_scores = st.sidebar.toggle("Show AI scores", value=False)
+
+    render_warehouse_wait_notice()
 
     if not db_configured():
         st.warning("Databricks secrets are not configured. Changes are kept only in this Streamlit session.")
