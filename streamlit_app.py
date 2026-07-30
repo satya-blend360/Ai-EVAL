@@ -773,14 +773,15 @@ def detect_question_count(submission_json: str) -> int:
 
 def load_correct_answer_key(question_count: int = 30) -> List[Dict[str, Any]]:
     """Load correct answer key from JSON file based on question count."""
-    if question_count == 20:
-        json_path = Path(APP_ROOT) / "20_questions.json"
-        if json_path.exists():
-            try:
-                data = json.loads(json_path.read_text(encoding="utf-8"))
-                return data.get("answers", [])
-            except Exception:
-                pass
+    # Disabled: 20-question submissions are non-compliant and receive 0 score
+    # if question_count == 20:
+    #     json_path = Path(APP_ROOT) / "20_questions.json"
+    #     if json_path.exists():
+    #         try:
+    #             data = json.loads(json_path.read_text(encoding="utf-8"))
+    #             return data.get("answers", [])
+    #         except Exception:
+    #             pass
 
     # Default to 30 questions (MD file parsing)
     if not JUDGE_READY_QUESTIONS_PATH.exists():
@@ -1164,11 +1165,23 @@ def compute_semantic_correctness(submission_json: str) -> Dict[str, Any]:
     """AI (semantic) correctness scoring for a single submission.
 
     Uses the LLM to judge whether each submitted answer matches the correct answer
-    in meaning rather than by keyword overlap. Automatically uses 20 or 30-question
-    answer key based on submission size. Meant to be run on demand per participant
-    (there are only a few dozen submissions), so cost stays low.
+    in meaning rather than by keyword overlap. Submissions with 20 questions receive
+    a score of 0 with explanation (they submitted training Q&A instead of evaluation Q&A).
+    Meant to be run on demand per participant (there are only a few dozen submissions),
+    so cost stays low.
     """
     question_count = detect_question_count(submission_json)
+
+    if question_count == 20:
+        return {
+            "score": 0.0,
+            "summary": "Non-compliant submission: This team submitted the training questions and answers (20 questions) "
+            "instead of the evaluation questions and answers (30 questions) that were requested. "
+            "The guidelines instructed teams to submit answers to the 30 evaluation questions, but this team submitted "
+            "answers to the 20 training questions instead. Score: 0/100 (non-compliant format).",
+            "details": [],
+        }
+
     key = load_correct_answer_key(question_count)
     submitted_answers = extract_submitted_answers(submission_json)
     if not key:
