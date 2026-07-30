@@ -1981,9 +1981,14 @@ def run_standard_submission_evaluation(selected: Dict[str, Any]):
     data = load_evaluation_dataset()
     evaluator = create_ai_evaluator()
     project_name = normalize_text(selected.get("project_name"))
+    submission_id = str(selected.get("submission_id", "")).strip()
+
+    case_index = hash(submission_id) % max(1, len(data.get("extraction_cases", [1])))
 
     if "horizon" in project_name:
-        hallucination_case = data.get("hallucination_cases", [None])[0]
+        hallucination_cases = data.get("hallucination_cases", [None])
+        case_idx = hash(submission_id) % max(1, len(hallucination_cases))
+        hallucination_case = hallucination_cases[case_idx]
         return evaluator.run_evaluation(
             hallucination_data={
                 "generated_answer": hallucination_case.get("generated_answer") if hallucination_case else "",
@@ -1993,10 +1998,16 @@ def run_standard_submission_evaluation(selected: Dict[str, Any]):
             else None
         )
 
-    extraction_case = data.get("extraction_cases", [None])[0]
-    retrieval_case = data.get("retrieval_cases", [None])[0]
-    rag_case = data.get("rag_cases", [None])[0]
-    sales_case = data.get("sales_brief_cases", [None])[0]
+    extraction_cases = data.get("extraction_cases", [None])
+    retrieval_cases = data.get("retrieval_cases", [None])
+    rag_cases = data.get("rag_cases", [None])
+    sales_cases = data.get("sales_brief_cases", [None])
+
+    extraction_case = extraction_cases[case_index % len(extraction_cases)] if extraction_cases else None
+    retrieval_case = retrieval_cases[case_index % len(retrieval_cases)] if retrieval_cases else None
+    rag_case = rag_cases[case_index % len(rag_cases)] if rag_cases else None
+    sales_case = sales_cases[case_index % len(sales_cases)] if sales_cases else None
+
     return evaluator.run_evaluation(
         extraction_data=extraction_case,
         retrieval_data=retrieval_case,
