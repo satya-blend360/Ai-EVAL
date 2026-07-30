@@ -3165,18 +3165,6 @@ def render_judge_portal(judge_email: str) -> None:
         unsafe_allow_html=True,
     )
 
-    if is_admin_email(judge_email):
-        with st.expander("Admin: Batch AI Evaluation"):
-            st.write("Pre-compute AI scores for all projects at once")
-            batch_col1, batch_col2 = st.columns(2)
-            with batch_col1:
-                batch_semantic = st.checkbox("AI Semantic Correctness", value=True, key="adm_sem")
-            with batch_col2:
-                batch_benchmark = st.checkbox("AI Benchmark", value=True, key="adm_bench")
-
-            if st.button("Run Batch Evaluation Now", type="primary", use_container_width=True):
-                st.info("Processing all submissions... this may take a few minutes.")
-
     selected_review_id = st.session_state.get("selected_review_submission_id")
     auto_refresh = st.sidebar.toggle("Auto-refresh list", value=False)
     if auto_refresh and not selected_review_id:
