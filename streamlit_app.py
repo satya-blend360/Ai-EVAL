@@ -2238,15 +2238,15 @@ def render_semantic_correctness_section(
             st.rerun()
 
 
-@st.dialog(“AI Evaluation Metrics”, width=”large”)
+@st.dialog("AI Evaluation Metrics", width="large")
 def render_evaluation_dialog(selected: Dict[str, Any]) -> None:
-    “””Popup that gathers all evaluation metrics for a submission in one place.”””
-    st.subheader(selected.get(“project_name”) or “Untitled project”)
-    st.markdown(“#### AI Semantic Correctness”)
+    """Popup that gathers all evaluation metrics for a submission in one place."""
+    st.subheader(selected.get("project_name") or "Untitled project")
+    st.markdown("#### AI Semantic Correctness")
     render_semantic_correctness_section(
-        selected.get(“submission_json”) or “”,
-        str(selected.get(“submission_id”) or “”),
-        context=”dialog”,
+        selected.get("submission_json") or "",
+        str(selected.get("submission_id") or ""),
+        context="dialog",
     )
 
 
@@ -3447,3 +3447,4 @@ if portal_view == "Admin Dashboard":
 if portal_view == "AI Evaluation Dashboard":
     render_submission_quality_dashboard(judge_email)
     st.stop()
+
