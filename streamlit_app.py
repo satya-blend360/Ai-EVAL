@@ -2774,6 +2774,48 @@ def render_admin_dashboard(judge_email: str) -> None:
     if total_submissions and scored_projects < total_submissions:
         st.caption(f"{scored_projects}/{total_submissions} member/team submissions have at least one judge score.")
 
+    st.markdown('<div class="section-header">AI Semantic Correctness - Review & Refresh</div>', unsafe_allow_html=True)
+    st.caption("View and refresh AI semantic correctness scores for individual projects.")
+
+    if not submissions.empty:
+        project_options = submissions[submissions["submission_json"].notna() & (submissions["submission_json"] != "")].copy()
+        if not project_options.empty:
+            selected_project_name = st.selectbox(
+                "Select a project to review/refresh AI score:",
+                project_options["project_name"].unique(),
+                key="admin_project_select"
+            )
+
+            if selected_project_name:
+                project_submissions = project_options[project_options["project_name"] == selected_project_name]
+                if not project_submissions.empty:
+                    selected_submission = project_submissions.iloc[0]
+                    submission_json = selected_submission.get("submission_json") or ""
+
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"**Project:** {selected_project_name}")
+                        st.write(f"**Submitter:** {selected_submission.get('submitter_name') or 'Unknown'}")
+
+                    with col2:
+                        if st.button("Refresh AI Score", key="admin_refresh_ai_score", use_container_width=True):
+                            st.session_state.setdefault("semantic_correctness_cache", {}).clear()
+                            st.success("Cache cleared. Score will be recalculated on refresh.")
+                            st.rerun()
+
+                    st.markdown("---")
+                    st.markdown("#### AI Semantic Correctness Evaluation")
+                    render_semantic_correctness_section(
+                        submission_json,
+                        str(selected_submission.get("submission_id") or ""),
+                        context="admin",
+                        judge_email=judge_email
+                    )
+        else:
+            st.info("No submissions with JSON payloads available yet.")
+    else:
+        st.info("No submissions available yet.")
+
     st.markdown('<div class="section-header">Judge Review Completion</div>', unsafe_allow_html=True)
     judge_display = judge_activity.copy()
     if not judge_display.empty:
