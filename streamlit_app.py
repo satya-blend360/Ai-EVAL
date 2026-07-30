@@ -762,7 +762,27 @@ def dedupe_submissions_by_team(submissions: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def load_correct_answer_key() -> List[Dict[str, Any]]:
+def detect_question_count(submission_json: str) -> int:
+    """Detect how many questions were submitted (20 or 30)."""
+    try:
+        data = json.loads(submission_json) if isinstance(submission_json, str) else submission_json
+        answers = data.get("answers", [])
+        return len(answers)
+    except Exception:
+        return 30
+
+def load_correct_answer_key(question_count: int = 30) -> List[Dict[str, Any]]:
+    """Load correct answer key from JSON file based on question count."""
+    if question_count == 20:
+        json_path = Path(APP_ROOT) / "20_questions.json"
+        if json_path.exists():
+            try:
+                data = json.loads(json_path.read_text(encoding="utf-8"))
+                return data.get("answers", [])
+            except Exception:
+                pass
+
+    # Default to 30 questions (MD file parsing)
     if not JUDGE_READY_QUESTIONS_PATH.exists():
         return []
     content = JUDGE_READY_QUESTIONS_PATH.read_text(encoding="utf-8")
@@ -1144,10 +1164,12 @@ def compute_semantic_correctness(submission_json: str) -> Dict[str, Any]:
     """AI (semantic) correctness scoring for a single submission.
 
     Uses the LLM to judge whether each submitted answer matches the correct answer
-    in meaning rather than by keyword overlap. Meant to be run on demand per
-    participant (there are only a few dozen submissions), so cost stays low.
+    in meaning rather than by keyword overlap. Automatically uses 20 or 30-question
+    answer key based on submission size. Meant to be run on demand per participant
+    (there are only a few dozen submissions), so cost stays low.
     """
-    key = load_correct_answer_key()
+    question_count = detect_question_count(submission_json)
+    key = load_correct_answer_key(question_count)
     submitted_answers = extract_submitted_answers(submission_json)
     if not key:
         return {"score": None, "summary": "No correct answer key is available.", "details": []}
