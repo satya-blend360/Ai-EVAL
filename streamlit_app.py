@@ -3310,8 +3310,17 @@ def render_judge_portal(judge_email: str) -> None:
             st.caption(f"Submitter: {selected.get('submitter_name') or 'Unknown'}")
         st.write(selected.get("description") or "No description submitted.")
 
+        submission_json = selected.get("submission_json") or ""
+        question_count = detect_question_count(submission_json)
+        if question_count == 20:
+            st.warning(
+                "⚠️ **Non-Compliant Submission:** This team submitted only 20 questions instead of the required 30. "
+                "The submission will be scored using the 20-question answer key. "
+                "Note: All teams were instructed to submit 30 questions."
+            )
+
         st.markdown('<div class="section-header">Submitted JSON</div>', unsafe_allow_html=True)
-        render_submission_json(selected.get("submission_json") or "")
+        render_submission_json(submission_json)
 
         st.markdown('<div class="section-header">AI Semantic Correctness</div>', unsafe_allow_html=True)
         render_correctness_assessment(
