@@ -2221,25 +2221,28 @@ def render_semantic_correctness_section(
         st.rerun()
 
 
-@st.dialog("AI Evaluation Metrics", width="large")
+@st.dialog(“AI Evaluation Metrics”, width=”large”)
 def render_evaluation_dialog(selected: Dict[str, Any]) -> None:
-    """Popup that gathers all evaluation metrics for a submission in one place."""
-    st.subheader(selected.get("project_name") or "Untitled project")
+    “””Popup that gathers all evaluation metrics for a submission in one place.”””
+    st.subheader(selected.get(“project_name”) or “Untitled project”)
 
-    ai_score = selected.get("ai_score")
-    st.metric("Overall AI Score", "N/A" if pd.isna(ai_score) else f"{float(ai_score):.1f}/100")
+    ai_score = selected.get(“ai_score”)
+    st.metric(“Overall AI Score”, “N/A” if pd.isna(ai_score) else f”{float(ai_score):.1f}/100”)
     st.info(
-        selected.get("ai_summary")
-        or "AI evaluation has not been run yet. Use “Run AI evaluation for this project”."
+        selected.get(“ai_summary”)
+        or “AI evaluation has not been run yet. Optional benchmark test.”
     )
 
-    st.markdown("---")
-    st.markdown("#### AI Semantic Correctness")
-    render_semantic_correctness_section(
-        selected.get("submission_json") or "",
-        str(selected.get("submission_id") or ""),
-        context="dialog",
-    )
+    st.markdown(“---”)
+    st.markdown(“#### AI Semantic Correctness”)
+
+    placeholder = st.empty()
+    with placeholder.container():
+        render_semantic_correctness_section(
+            selected.get(“submission_json”) or “”,
+            str(selected.get(“submission_id”) or “”),
+            context=”dialog”,
+        )
 
 
 def render_floating_eval_button(selected: Dict[str, Any]) -> None:
@@ -3354,8 +3357,9 @@ def render_judge_portal(judge_email: str) -> None:
         else:
             st.caption("AI score is hidden. Use the sidebar toggle to show it.")
 
-        if st.button("Run AI evaluation for this project", use_container_width=True):
-            with st.spinner("Running AI evaluation..."):
+        st.caption("💡 Tip: Use 'AI Semantic Correctness' (above) to grade actual answers. The button below runs a standard benchmark test.")
+        if st.button("Run AI benchmark evaluation (optional)", use_container_width=True, help="Evaluates standard test cases, not your submission answers. AI Semantic Correctness above grades your actual work."):
+            with st.spinner("Running AI benchmark evaluation..."):
                 try:
                     # AI evaluation never touches the submission URL — it grades the
                     # standard local benchmark only (no network calls to the prototype).
