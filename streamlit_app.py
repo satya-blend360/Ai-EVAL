@@ -2755,6 +2755,37 @@ def render_admin_dashboard(judge_email: str) -> None:
     if total_submissions and scored_projects < total_submissions:
         st.caption(f"{scored_projects}/{total_submissions} member/team submissions have at least one judge score.")
 
+    st.markdown('<div class="section-header">AI Evaluation Controls</div>', unsafe_allow_html=True)
+    st.write("Refresh AI scores for individual projects:")
+    if submissions.empty:
+        st.caption("No projects to evaluate.")
+    else:
+        cols_per_row = 3
+        cols = st.columns(cols_per_row)
+        for idx, (_, project) in enumerate(submissions.iterrows()):
+            col_idx = idx % cols_per_row
+            with cols[col_idx]:
+                project_name = project.get("project_name", f"Project {idx+1}")
+                sub_id = str(project.get("submission_id", ""))
+                ai_score = project.get("ai_score")
+                score_text = f"{float(ai_score):.1f}/100" if not pd.isna(ai_score) else "Pending"
+
+                with st.container(border=True):
+                    st.write(f"**{project_name}**")
+                    st.caption(f"AI Score: {score_text}")
+                    if st.button("Refresh AI", key=f"admin_refresh_{sub_id}", use_container_width=True):
+                        try:
+                            report = run_standard_submission_evaluation(project)
+                            update_ai_result(
+                                sub_id,
+                                report.overall_score,
+                                f"Refreshed: {report.overall_score:.1f}/100"
+                            )
+                            st.success(f"Updated: {report.overall_score:.1f}/100")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed: {str(e)[:100]}")
+
     st.markdown('<div class="section-header">Judge Review Completion</div>', unsafe_allow_html=True)
     judge_display = judge_activity.copy()
     if not judge_display.empty:
