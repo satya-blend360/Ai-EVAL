@@ -2777,37 +2777,6 @@ def render_admin_dashboard(judge_email: str) -> None:
     if total_submissions and scored_projects < total_submissions:
         st.caption(f"{scored_projects}/{total_submissions} member/team submissions have at least one judge score.")
 
-    st.markdown('<div class="section-header">AI Evaluation Controls</div>', unsafe_allow_html=True)
-    st.write("Refresh AI scores for individual projects:")
-    if submissions.empty:
-        st.caption("No projects to evaluate.")
-    else:
-        cols_per_row = 3
-        cols = st.columns(cols_per_row)
-        for idx, (_, project) in enumerate(submissions.iterrows()):
-            col_idx = idx % cols_per_row
-            with cols[col_idx]:
-                project_name = project.get("project_name", f"Project {idx+1}")
-                sub_id = str(project.get("submission_id", ""))
-                ai_score = project.get("ai_score")
-                score_text = f"{float(ai_score):.1f}/100" if not pd.isna(ai_score) else "Pending"
-
-                with st.container(border=True):
-                    st.write(f"**{project_name}**")
-                    st.caption(f"AI Score: {score_text}")
-                    if st.button("Refresh AI", key=f"admin_refresh_{sub_id}", use_container_width=True):
-                        try:
-                            report = run_standard_submission_evaluation(project)
-                            update_ai_result(
-                                sub_id,
-                                report.overall_score,
-                                f"Refreshed: {report.overall_score:.1f}/100"
-                            )
-                            st.success(f"Updated: {report.overall_score:.1f}/100")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed: {str(e)[:100]}")
-
     st.markdown('<div class="section-header">Judge Review Completion</div>', unsafe_allow_html=True)
     judge_display = judge_activity.copy()
     if not judge_display.empty:
@@ -3225,7 +3194,6 @@ def render_judge_portal(judge_email: str) -> None:
     if st.sidebar.button("Refresh data", use_container_width=True):
         load_submissions.clear()
         st.rerun()
-    show_ai_scores = st.sidebar.toggle("Show AI scores", value=False)
 
     render_warehouse_wait_notice()
 
@@ -3358,7 +3326,7 @@ def render_judge_portal(judge_email: str) -> None:
             ai_value = row.get("ai_score")
             avg_judge = row.get("avg_judge_score")
             with st.container(border=True):
-                top_cols = st.columns([0.5, 0.18, 0.16, 0.16])
+                top_cols = st.columns([0.6, 0.2, 0.2])
                 with top_cols[0]:
                     st.subheader(row.get("project_name") or "Untitled project")
                     if is_admin_email(judge_email):
@@ -3369,13 +3337,8 @@ def render_judge_portal(judge_email: str) -> None:
                     if description:
                         st.write(description[:240] + ("..." if len(description) > 240 else ""))
                 with top_cols[1]:
-                    st.metric(
-                        "AI Score",
-                        "Hidden" if not show_ai_scores else "N/A" if pd.isna(ai_value) else f"{float(ai_value):.1f}",
-                    )
-                with top_cols[2]:
                     st.metric("Judge Avg /20", "N/A" if pd.isna(avg_judge) else f"{float(avg_judge):.1f}")
-                with top_cols[3]:
+                with top_cols[2]:
                     badge_class = "review-status-reviewed" if reviewed else "review-status-pending"
                     badge_label = "Reviewed" if reviewed else "Pending"
                     st.markdown(
@@ -3411,38 +3374,6 @@ def render_judge_portal(judge_email: str) -> None:
 
         st.markdown('<div class="section-header">Screenshots</div>', unsafe_allow_html=True)
         render_screenshots(selected.get("screenshots_json") or "")
-
-        if show_ai_scores:
-            st.markdown('<div class="section-header">AI Evaluation</div>', unsafe_allow_html=True)
-            ai_score = selected.get("ai_score")
-            if pd.isna(ai_score) or ai_score is None:
-                st.caption("Score pending - Admin will compute for all projects")
-            else:
-                st.metric("AI Score", f"{float(ai_score):.1f}/100")
-                st.info(selected.get("ai_summary") or "Benchmark evaluation score")
-        else:
-            st.caption("AI score is hidden. Use the sidebar toggle to show it.")
-
-        if is_admin_email(judge_email):
-            if st.button("Run AI evaluation for this project", use_container_width=True):
-                with st.spinner("Running AI evaluation..."):
-                    try:
-                        report = run_standard_submission_evaluation(selected)
-                        ai_summary = (
-                            f"AI evaluation completed with run ID {report.run_id}. "
-                            f"Overall score: {report.overall_score:.1f}/100."
-                        )
-                        update_ai_result(
-                            selected_id,
-                            report.overall_score,
-                            ai_summary,
-                        )
-                        st.success(f"AI evaluation saved. Overall score: {report.overall_score:.1f}/100.")
-                        st.rerun()
-                    except Exception as exc:
-                        show_optional_evaluator_error(exc)
-        else:
-            st.caption("AI scores are pre-computed by admin. Refresh to see latest scores.")
 
     with score_col:
         st.markdown('<div class="section-header">Your Marks</div>', unsafe_allow_html=True)
