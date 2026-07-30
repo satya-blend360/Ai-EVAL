@@ -3354,26 +3354,26 @@ def render_judge_portal(judge_email: str) -> None:
         else:
             st.caption("AI score is hidden. Use the sidebar toggle to show it.")
 
-        if st.button("Run AI evaluation for this project", use_container_width=True):
-            with st.spinner("Running AI evaluation..."):
-                try:
-                    # AI evaluation never touches the submission URL — it grades the
-                    # standard local benchmark only (no network calls to the prototype).
-                    report = run_standard_submission_evaluation(selected)
-
-                    ai_summary = (
-                        f"AI evaluation completed with run ID {report.run_id}. "
-                        f"Overall score: {report.overall_score:.1f}/100."
-                    )
-                    update_ai_result(
-                        selected_id,
-                        report.overall_score,
-                        ai_summary,
-                    )
-                    st.success(f"AI evaluation saved. Overall score: {report.overall_score:.1f}/100.")
-                    st.rerun()
-                except Exception as exc:
-                    show_optional_evaluator_error(exc)
+        if is_admin_email(judge_email):
+            if st.button("Run AI evaluation for this project", use_container_width=True):
+                with st.spinner("Running AI evaluation..."):
+                    try:
+                        report = run_standard_submission_evaluation(selected)
+                        ai_summary = (
+                            f"AI evaluation completed with run ID {report.run_id}. "
+                            f"Overall score: {report.overall_score:.1f}/100."
+                        )
+                        update_ai_result(
+                            selected_id,
+                            report.overall_score,
+                            ai_summary,
+                        )
+                        st.success(f"AI evaluation saved. Overall score: {report.overall_score:.1f}/100.")
+                        st.rerun()
+                    except Exception as exc:
+                        show_optional_evaluator_error(exc)
+        else:
+            st.caption("AI scores are pre-computed by admin. Refresh to see latest scores.")
 
     with score_col:
         st.markdown('<div class="section-header">Your Marks</div>', unsafe_allow_html=True)
