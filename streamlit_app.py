@@ -2219,6 +2219,7 @@ def render_semantic_correctness_section(
                 [
                     {
                         "Q#": detail["question_number"],
+                        "Question": detail.get("question", ""),
                         "Submitted Answer": detail["submitted_answer"],
                         "Correct Answer": detail["correct_answer"],
                         "AI Score": detail["score"],
