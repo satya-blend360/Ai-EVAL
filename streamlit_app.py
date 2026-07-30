@@ -2677,6 +2677,9 @@ def render_admin_dashboard(judge_email: str) -> None:
         load_all_judge_scores.clear()
         st.rerun()
 
+    if st.sidebar.button("⚡ Batch Compute All AI Scores", use_container_width=True):
+        st.session_state["start_batch_ai_compute"] = True
+
     auto_refresh = st.sidebar.toggle("Auto-refresh admin", value=False)
     if auto_refresh:
         try:
@@ -2903,6 +2906,58 @@ def render_admin_dashboard(judge_email: str) -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+    if st.session_state.get("start_batch_ai_compute"):
+        st.markdown('<div class="section-header">Batch AI Semantic Correctness Computation</div>', unsafe_allow_html=True)
+        st.info(
+            "Computing AI semantic correctness scores for all submissions. "
+            "This may take several minutes (1-2 minutes per 30 submissions). Scores will be saved to Databricks."
+        )
+
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        to_process = submissions[submissions["submission_json"].notna() & (submissions["submission_json"] != "")].copy()
+        total = len(to_process)
+
+        if total == 0:
+            st.warning("No submissions with JSON payloads to process.")
+        else:
+            computed = 0
+            skipped = 0
+
+            for idx, (_, submission) in enumerate(to_process.iterrows()):
+                submission_id = str(submission.get("submission_id") or "")
+                project_name = submission.get("project_name") or "Untitled"
+                submission_json = submission.get("submission_json") or ""
+
+                status_text.text(f"Computing {idx + 1}/{total}: {project_name}...")
+                progress_bar.progress((idx + 1) / total)
+
+                try:
+                    ai_result = compute_semantic_correctness(submission_json)
+                    if ai_result and ai_result.get("score") is not None:
+                        update_ai_result(
+                            submission_id,
+                            float(ai_result["score"]),
+                            ai_result.get("summary", "")
+                        )
+                        computed += 1
+                    else:
+                        skipped += 1
+                except Exception as e:
+                    st.warning(f"Error computing score for {project_name}: {str(e)[:100]}")
+                    skipped += 1
+
+            load_submissions.clear()
+            load_all_judge_scores.clear()
+
+            st.session_state.pop("start_batch_ai_compute", None)
+            st.success(
+                f"✅ Batch computation complete! Computed {computed} scores, skipped {skipped}. "
+                f"Scores saved to Databricks. Judges will see instant scores on next view."
+            )
+            st.rerun()
 
 
 def render_submission_quality_dashboard(judge_email: str) -> None:
