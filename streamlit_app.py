@@ -697,6 +697,7 @@ def run_db_query(query: str, parameters: Optional[Dict[str, Any]] = None, fetch:
                 server_hostname=get_secret("DATABRICKS_SERVER_HOSTNAME"),
                 http_path=target["http_path"],
                 access_token=get_secret("DATABRICKS_TOKEN"),
+                socket_timeout=1,
             ) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(query, parameters=parameters or {})
@@ -3449,7 +3450,7 @@ if not st.session_state.get("judge_login_recorded"):
 
         thread = threading.Thread(target=record_login_with_timeout, daemon=True)
         thread.start()
-        thread.join(timeout=2)
+        thread.join(timeout=5)
         sql_server_working = not st.session_state.get("login_tracking_error")
         st.session_state.pop("login_tracking_error", None)
     except Exception as exc:
