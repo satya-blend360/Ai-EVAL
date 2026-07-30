@@ -1,0 +1,105 @@
+{
+  "instructions": "Participants submit completed test-set answers. Fill every answer field.",
+  "answers": [
+    {
+      "question_number": 1,
+      "question": "In the Mastercard financial services deck on benchmarking vs. best-in-class B2B marketers, what did the work use to compare leading B2B marketers?",
+      "answer": "A comparative multi-dimensional framework with composite scores and dimensions."
+    },
+    {
+      "question_number": 2,
+      "question": "In the Phoenix pharmaceutical case about repositioning a major marketing services agency for growth, what shift did the CEO want to make over the next five years?",
+      "answer": "Shift from a services company to a software-and-services company."
+    },
+    {
+      "question_number": 3,
+      "question": "In the OTA financial services omni-channel acquisition campaign, which channel combinations produced 12% and 26% lift?",
+      "answer": "DM + Paid Social produced 12% lift; DM + Connected TV produced 26% lift."
+    },
+    {
+      "question_number": 4,
+      "question": "For FreshDirect acquisition, what direct-mail campaign results beat plan in fall 2018?",
+      "answer": "Response rate beat plan by 29%, and CPA was 29% below target."
+    },
+    {
+      "question_number": 5,
+      "question": "In the State Farm national auto insurer MMM case about a $500MM-$750MM marketing budget, what efficiency result was reported?",
+      "answer": "Marketing efficiency improved by almost 30%."
+    },
+    {
+      "question_number": 6,
+      "question": "In the 21st Century California auto insurance lead scoring case, what three quantified impacts were reported after real-time scoring?",
+      "answer": "64% higher conversion, 79% lower cost per conversion, and 91% shorter lead scoring run time."
+    },
+    {
+      "question_number": 7,
+      "question": "In the CNO Financial campaign strategy and lead journey case, what deliverable improved understanding of lead flow and decisioning outcomes?",
+      "answer": "A multichannel lead journey map."
+    },
+    {
+      "question_number": 8,
+      "question": "In the Dish telecom and retail wireless marketing excellence roadmap case, what campaign activation results were reported?",
+      "answer": "Send volume increased 400%, and revenue impact increased 33%."
+    },
+    {
+      "question_number": 9,
+      "question": "In the AdTech MLOps case for real-time bidding campaign optimization, what bidding-decision scale did the solution support?",
+      "answer": "3 million bidding decisions per second."
+    },
+    {
+      "question_number": 10,
+      "question": "For Adtalem lead scoring, what conversion lift did the top decile achieve versus the existing production model?",
+      "answer": "47% higher conversion for DLS and 26% higher conversion for TOF."
+    },
+    {
+      "question_number": 11,
+      "question": "In the Goldman Sachs financial services cross-channel attribution case, how did the model estimate incremental lift for channel mix decisions?",
+      "answer": "It used transit and conversion stages, then compared actual conversions to a simulation where a channel was removed."
+    },
+    {
+      "question_number": 12,
+      "question": "Which case should a sales rep use to show a hospitality company moving from telemarketing to data-driven digital targeting, and what lift was reported?",
+      "answer": "HGV predictive modeling and omni-channel targeting; over 60% incremental lift."
+    },
+    {
+      "question_number": 13,
+      "question": "For PetPlan, what data-quality issue changed confidence in marketing attribution?",
+      "answer": "A Google Analytics cookie expiration setting limited tracking of consumer behavior over time."
+    },
+    {
+      "question_number": 14,
+      "question": "In the Aetna health insurance next-best-action case, what customer life moment was the recommendation engine designed around?",
+      "answer": "Customers around their 60th birthday."
+    },
+    {
+      "question_number": 15,
+      "question": "For USF sales leadership, what scale and commercial lift did the customer-centric pricing solution deliver?",
+      "answer": "20M+ customer-level prices monthly, with 1.5-2% revenue lift and 7-8% margin lift."
+    },
+    {
+      "question_number": 16,
+      "question": "In the Benefytt health insurance direct-mail modeling case, what total business impact should marketing leadership cite?",
+      "answer": "20% YoY conversion improvement and $38MM revenue influenced from submissions."
+    },
+    {
+      "question_number": 17,
+      "question": "In the Seamless retail apparel analytics case aiming for Apple-level store performance monitoring, what data stack was built?",
+      "answer": "An integrated DBT and Tableau data and analytics supply chain."
+    },
+    {
+      "question_number": 18,
+      "question": "For Myovant, what outcomes show the omnichannel next-best-action solution improved marketing efficiency?",
+      "answer": "30% higher sales and marketing ROI, 65% lower resource expense, and 90% higher digital effectiveness."
+    },
+    {
+      "question_number": 19,
+      "question": "In the predictive personalization case for a global entertainment streaming platform, what user-data limitation did Blend work within, and what annual value was cited?",
+      "answer": "Only viewing habits were available; about $5.3M annual value from personalized targeting."
+    },
+    {
+      "question_number": 20,
+      "question": "In the healthcare integrated media marketing analytics engine case, what proof points show the platform was enterprise-scale?",
+      "answer": "Six modules, 48 automated models, 40+ screens, $75M+ media budget, and 131M target audience supported in 2024."
+    }
+  ]
+}
