@@ -2652,6 +2652,104 @@ def render_llm_fallback_status_sidebar() -> None:
     )
 
 
+def render_batch_ai_evaluation(submissions) -> None:
+    """Admin tool to pre-compute AI evaluations for all projects."""
+    st.markdown('<div class="section-header">🚀 Batch AI Evaluation</div>', unsafe_allow_html=True)
+    st.markdown("Pre-compute AI Semantic Correctness and Benchmark scores for all projects. Judges won't need to wait!")
+
+    if submissions.empty:
+        st.caption("No submissions to evaluate.")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        eval_semantic = st.checkbox("Semantic Correctness (grades answers)", value=True)
+    with col2:
+        eval_benchmark = st.checkbox("Benchmark Evaluation (standard tests)", value=True)
+
+    if st.button("▶️ Run Batch Evaluation", use_container_width=True, type="primary"):
+        if not eval_semantic and not eval_benchmark:
+            st.warning("Please select at least one evaluation type.")
+            return
+
+        progress_bar = st.progress(0)
+        status_area = st.empty()
+        results_area = st.empty()
+
+        total = len(submissions)
+        evaluated = 0
+        skipped = 0
+        errors = 0
+
+        for idx, (_, submission) in enumerate(submissions.iterrows()):
+            try:
+                submission_id = str(submission.get("submission_id", ""))
+                project_name = submission.get("project_name", f"Project {idx+1}")
+
+                status_area.info(f"⏳ [{idx+1}/{total}] Evaluating: {project_name}...")
+
+                # AI Semantic Correctness
+                if eval_semantic and submission.get("submission_json"):
+                    try:
+                        cache = st.session_state.setdefault("semantic_correctness_cache", {})
+                        cache_key = f"{submission_id}:{len(submission.get('submission_json', ''))}:{hash(submission.get('submission_json', ''))}"
+                        if cache_key not in cache:
+                            cache[cache_key] = compute_semantic_correctness(submission.get("submission_json", ""))
+                    except Exception as e:
+                        st.session_state.setdefault("batch_eval_errors", []).append(
+                            f"{project_name}: Semantic correctness failed - {str(e)[:100]}"
+                        )
+                        errors += 1
+
+                # AI Benchmark Evaluation
+                if eval_benchmark:
+                    try:
+                        ai_score = submission.get("ai_score")
+                        if pd.isna(ai_score) or ai_score is None:
+                            report = run_standard_submission_evaluation(submission)
+                            update_ai_result(
+                                submission_id,
+                                report.overall_score,
+                                f"Batch evaluated. Score: {report.overall_score:.1f}/100."
+                            )
+                            evaluated += 1
+                        else:
+                            skipped += 1
+                    except Exception as e:
+                        st.session_state.setdefault("batch_eval_errors", []).append(
+                            f"{project_name}: Benchmark evaluation failed - {str(e)[:100]}"
+                        )
+                        errors += 1
+
+                progress = (idx + 1) / total
+                progress_bar.progress(progress)
+
+            except Exception as e:
+                errors += 1
+                st.session_state.setdefault("batch_eval_errors", []).append(f"Project {idx+1}: {str(e)[:100]}")
+
+        status_area.empty()
+        progress_bar.empty()
+
+        results = st.session_state.get("batch_eval_errors", [])
+        with results_area.container():
+            col1, col2, col3 = st.columns(3)
+            col1.metric("✅ Evaluated", evaluated)
+            col2.metric("⏭️ Skipped", skipped)
+            col3.metric("❌ Errors", errors)
+
+            if results:
+                st.warning(f"**{len(results)} issues found:**")
+                for msg in results[:10]:
+                    st.caption(f"• {msg}")
+                if len(results) > 10:
+                    st.caption(f"... and {len(results)-10} more")
+            else:
+                st.success("✅ All evaluations completed successfully!")
+
+            st.session_state["batch_eval_errors"] = []
+
+
 def render_admin_dashboard(judge_email: str) -> None:
     if not is_admin_email(judge_email):
         st.error("Admin dashboard access is restricted.")
@@ -2659,7 +2757,7 @@ def render_admin_dashboard(judge_email: str) -> None:
 
     st.markdown('<div class="main-title">Admin Dashboard</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="sub-title">Monitor judge logins, review completion, project rankings, and all saved scorecards.</div>',
+        '<div class="sub-title">Monitor judge logins, review completion, project rankings, and run batch evaluations.</div>',
         unsafe_allow_html=True,
     )
 
@@ -2732,6 +2830,10 @@ def render_admin_dashboard(judge_email: str) -> None:
     kpi_cols[2].metric("Completed Reviews", completed_reviews)
     kpi_cols[3].metric("Judges Complete", f"{judges_complete}/{total_judges}")
     kpi_cols[4].metric("Avg Score /20", format_optional_number(avg_score))
+
+    st.divider()
+    render_batch_ai_evaluation(submissions)
+    st.divider()
 
     st.markdown('<div class="section-header">Top 3 Members / Teams</div>', unsafe_allow_html=True)
     top_projects = project_scores[project_scores["Reviews Completed"] > 0].head(3) if not project_scores.empty else project_scores
