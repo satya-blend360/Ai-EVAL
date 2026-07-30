@@ -2164,7 +2164,7 @@ def render_correctness_assessment(
 
 
 def render_semantic_correctness_section(
-    submission_json: str, submission_id: str = "", context: str = "inline"
+    submission_json: str, submission_id: str = "", context: str = "inline", judge_email: str = ""
 ) -> None:
     """AI (semantic) correctness scoring for the current submission.
 
@@ -2216,9 +2216,10 @@ def render_semantic_correctness_section(
             hide_index=True,
         )
 
-    if st.button("Re-grade with AI", key=f"ai_regrade_{context}_{cache_key}"):
-        cache.pop(cache_key, None)
-        st.rerun()
+    if is_admin_email(judge_email):
+        if st.button("Refresh AI Grading", key=f"ai_regrade_{context}_{cache_key}"):
+            cache.pop(cache_key, None)
+            st.rerun()
 
 
 @st.dialog("AI Evaluation Metrics", width="large")
