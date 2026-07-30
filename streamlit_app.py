@@ -3437,24 +3437,30 @@ if not st.session_state.get("judge_logged_in"):
 judge_email = st.session_state["judge_email"]
 
 if not st.session_state.get("judge_login_recorded"):
+    sql_server_working = False
     try:
         import threading
         def record_login_with_timeout():
             try:
                 record_judge_login(judge_email)
+                return True
             except Exception:
-                pass
+                return False
 
         thread = threading.Thread(target=record_login_with_timeout, daemon=True)
         thread.start()
         thread.join(timeout=2)
+        sql_server_working = not st.session_state.get("login_tracking_error")
         st.session_state.pop("login_tracking_error", None)
     except Exception as exc:
         st.session_state["login_tracking_error"] = str(exc)
+        sql_server_working = False
+
     st.session_state["judge_login_recorded"] = True
+    st.session_state["sql_server_working"] = sql_server_working
 
 st.sidebar.markdown(f"Signed in as `{judge_email}`")
-if db_configured():
+if db_configured() and not st.session_state.get("sql_server_working", False):
     st.sidebar.warning("⏳ SQL Server is starting up. Please wait 3-4 minutes for full features to be available.")
 if st.sidebar.button("Log out", use_container_width=True):
     st.session_state.clear()
