@@ -1698,7 +1698,6 @@ def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -
     columns = [
         "Member / Team",
         "Submitter",
-        "AI Score /100",
         "Automatic Correctness Score /100",
         "Correct Answer Comparison",
         "Reviews Completed",
@@ -1753,11 +1752,6 @@ def build_project_score_table(submissions: pd.DataFrame, scores: pd.DataFrame) -
     projects["Reviews Completed"] = pd.to_numeric(projects.get("Reviews Completed"), errors="coerce").fillna(0).astype(int)
     projects["Total Score"] = pd.to_numeric(projects.get("Total Score"), errors="coerce")
     projects["Avg Score /20"] = pd.to_numeric(projects.get("Avg Score /20"), errors="coerce")
-    projects["AI Score /100"] = (
-        pd.to_numeric(projects["ai_score"], errors="coerce")
-        if "ai_score" in projects.columns
-        else np.nan
-    )
     projects["Automatic Correctness Score /100"] = (
         pd.to_numeric(projects["correctness_score"], errors="coerce")
         if "correctness_score" in projects.columns
@@ -2244,24 +2238,15 @@ def render_semantic_correctness_section(
             st.rerun()
 
 
-@st.dialog("AI Evaluation Metrics", width="large")
+@st.dialog(“AI Evaluation Metrics”, width=”large”)
 def render_evaluation_dialog(selected: Dict[str, Any]) -> None:
-    """Popup that gathers all evaluation metrics for a submission in one place."""
-    st.subheader(selected.get("project_name") or "Untitled project")
-
-    ai_score = selected.get("ai_score")
-    st.metric("Overall AI Score", "N/A" if pd.isna(ai_score) else f"{float(ai_score):.1f}/100")
-    st.info(
-        selected.get("ai_summary")
-        or "AI evaluation has not been run yet. Use “Run AI evaluation for this project”."
-    )
-
-    st.markdown("---")
-    st.markdown("#### AI Semantic Correctness")
+    “””Popup that gathers all evaluation metrics for a submission in one place.”””
+    st.subheader(selected.get(“project_name”) or “Untitled project”)
+    st.markdown(“#### AI Semantic Correctness”)
     render_semantic_correctness_section(
-        selected.get("submission_json") or "",
-        str(selected.get("submission_id") or ""),
-        context="dialog",
+        selected.get(“submission_json”) or “”,
+        str(selected.get(“submission_id”) or “”),
+        context=”dialog”,
     )
 
 
@@ -2753,7 +2738,6 @@ def render_admin_dashboard(judge_email: str) -> None:
                 with st.container(border=True):
                     st.subheader(f"#{index} {row['Member / Team']}")
                     st.metric("Avg Score /20", format_optional_number(row["Avg Score /20"]))
-                    st.metric("AI Score /100", format_optional_number(row["AI Score /100"]))
                     st.metric(
                         "Correctness /100",
                         format_optional_number(row["Automatic Correctness Score /100"]),
@@ -2766,7 +2750,6 @@ def render_admin_dashboard(judge_email: str) -> None:
     st.markdown('<div class="section-header">Member / Team Scoreboard</div>', unsafe_allow_html=True)
     project_display = project_scores.copy()
     if not project_display.empty:
-        project_display["AI Score /100"] = pd.to_numeric(project_display["AI Score /100"], errors="coerce").round(1)
         project_display["Automatic Correctness Score /100"] = pd.to_numeric(
             project_display["Automatic Correctness Score /100"],
             errors="coerce",
@@ -2918,21 +2901,13 @@ def render_submission_quality_dashboard(judge_email: str) -> None:
         if not judge_activity.empty and "Reviews Completed" in judge_activity.columns
         else 0
     )
-    avg_ai_score = (
-        pd.to_numeric(project_scores.get("AI Score /100"), errors="coerce").mean()
-        if not project_scores.empty
-        else np.nan
-    )
     avg_judge_score = (
         pd.to_numeric(scores.get("total_score"), errors="coerce").mean()
         if not scores.empty
         else np.nan
     )
-    overall_quality = avg_ai_score
-    overall_source = "Avg AI score from submitted projects"
-    if pd.isna(overall_quality) and not pd.isna(avg_judge_score):
-        overall_quality = avg_judge_score / PIH_SCORE_MAX * 100.0
-        overall_source = "Avg judge score scaled to 100"
+    overall_quality = avg_judge_score / PIH_SCORE_MAX * 100.0 if not pd.isna(avg_judge_score) else np.nan
+    overall_source = "Avg judge score scaled to 100"
 
     metric_cols = st.columns(5)
     with metric_cols[0]:
@@ -3025,31 +3000,24 @@ def render_submission_quality_dashboard(judge_email: str) -> None:
             st.plotly_chart(fig_status, use_container_width=True)
 
         with g_col2:
-            st.markdown('<div class="section-header">Real Score Trend</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-header">Judge Score Trend</div>', unsafe_allow_html=True)
             if project_scores.empty:
                 st.info("No submissions are available yet.")
             else:
                 trend_df = project_scores.copy()
-                trend_df["AI Score /100"] = pd.to_numeric(trend_df["AI Score /100"], errors="coerce")
                 trend_df["Avg Judge Score /100"] = (
                     pd.to_numeric(trend_df["Avg Score /20"], errors="coerce") / PIH_SCORE_MAX * 100.0
                 )
-                trend_df = trend_df[["Member / Team", "AI Score /100", "Avg Judge Score /100"]].melt(
-                    id_vars="Member / Team",
-                    var_name="Score Type",
-                    value_name="Score",
-                )
-                trend_df = trend_df.dropna(subset=["Score"])
+                trend_df = trend_df[["Member / Team", "Avg Judge Score /100"]].dropna()
                 if trend_df.empty:
-                    st.info("No AI or judge scores have been recorded yet.")
+                    st.info("No judge scores have been recorded yet.")
                 else:
                     fig_trend = px.line(
                         trend_df,
                         x="Member / Team",
-                        y="Score",
-                        color="Score Type",
+                        y="Avg Judge Score /100",
                         markers=True,
-                        color_discrete_sequence=["#14b8a6", "#3b82f6"],
+                        color_discrete_sequence=["#3b82f6"],
                     )
                     fig_trend.update_layout(
                         yaxis=dict(range=[0, 105]),
@@ -3069,7 +3037,6 @@ def render_submission_quality_dashboard(judge_email: str) -> None:
                 with top_cols[index - 1]:
                     with st.container(border=True):
                         st.subheader(f"#{index} {row['Member / Team']}")
-                        st.metric("AI Score /100", format_optional_number(row["AI Score /100"]))
                         st.metric(
                             "Correctness /100",
                             format_optional_number(row["Automatic Correctness Score /100"]),
@@ -3081,7 +3048,6 @@ def render_submission_quality_dashboard(judge_email: str) -> None:
         st.markdown('<div class="section-header">Member / Team Scoreboard</div>', unsafe_allow_html=True)
         project_display = project_scores.copy()
         if not project_display.empty:
-            project_display["AI Score /100"] = pd.to_numeric(project_display["AI Score /100"], errors="coerce").round(1)
             project_display["Automatic Correctness Score /100"] = pd.to_numeric(
                 project_display["Automatic Correctness Score /100"],
                 errors="coerce",
@@ -3214,13 +3180,11 @@ def render_judge_portal(judge_email: str) -> None:
     total_submissions = len(submissions)
     reviewed_submissions = len(reviewed_ids)
     pending_submissions = max(total_submissions - reviewed_submissions, 0)
-    avg_ai = submissions["ai_score"].dropna().mean() if "ai_score" in submissions else np.nan
 
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.metric("Submitted", total_submissions)
     kpi2.metric("Reviewed", reviewed_submissions)
     kpi3.metric("Pending", pending_submissions)
-    kpi4.metric("Avg AI Score", "N/A" if pd.isna(avg_ai) else f"{avg_ai:.1f}")
 
     if submissions.empty:
         st.info("No project submissions are available yet.")
