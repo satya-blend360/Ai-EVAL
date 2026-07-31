@@ -271,15 +271,21 @@ def load_judge_credentials() -> Dict[str, str]:
 
     try:
         ensure_judges_table()
-        result = run_db_query(f"SELECT judge_email, password FROM {DB_PREFIX}.judges")
+        query = f"SELECT judge_email, password FROM {DB_PREFIX}.judges"
+        result = run_db_query(query)
+
         if result:
             for row in result:
                 email = str(row[0]).strip().lower()
                 pwd = str(row[1])
                 if email and pwd:
                     credentials[email] = pwd
-    except Exception:
-        pass
+        else:
+            pass
+    except Exception as e:
+        import traceback
+        st.write(f"DEBUG: Error loading judges: {str(e)}")
+        st.write(f"DEBUG: Traceback: {traceback.format_exc()}")
 
     return credentials
 
@@ -3060,6 +3066,7 @@ def render_admin_dashboard(judge_email: str) -> None:
 
     st.markdown("**Current Judges:**")
     current_judges = load_judge_credentials()
+    st.caption(f"DEBUG: Loaded {len(current_judges)} judges from Databricks")
     if current_judges:
         judges_df = pd.DataFrame([{"Email": email} for email in current_judges.keys()])
         st.dataframe(judges_df, use_container_width=True, hide_index=True)
