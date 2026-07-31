@@ -2058,29 +2058,40 @@ def delete_judge_credentials(judge_email: str) -> bool:
 
 def save_judge_allocation(judge_email: str, submission_id: str) -> bool:
     """Save judge-project allocation to Databricks."""
+    judge_email_lower = judge_email.lower()
+    submission_id_str = str(submission_id)
+
     if not db_configured():
-        st.session_state.setdefault("local_judge_allocations", []).append(
-            {"judge_email": judge_email.lower(), "submission_id": submission_id}
-        )
+        local = st.session_state.setdefault("local_judge_allocations", [])
+        for alloc in local:
+            if alloc.get("judge_email") == judge_email_lower and alloc.get("submission_id") == submission_id_str:
+                return True
+        local.append({"judge_email": judge_email_lower, "submission_id": submission_id_str})
         return True
 
     try:
         ensure_judge_allocations_table()
         allocation_id = f"alloc_{uuid.uuid4().hex[:12]}"
+
+        query = f"""
+        INSERT INTO {DB_PREFIX}.judge_allocations (allocation_id, judge_email, submission_id, created_at)
+        VALUES (:allocation_id, :judge_email, :submission_id, current_timestamp())
+        """
+
         run_db_query(
-            f"""
-            INSERT INTO {DB_PREFIX}.judge_allocations (allocation_id, judge_email, submission_id, created_at)
-            VALUES (:allocation_id, :judge_email, :submission_id, current_timestamp())
-            """,
+            query,
             {
                 "allocation_id": allocation_id,
-                "judge_email": judge_email.lower(),
-                "submission_id": str(submission_id),
+                "judge_email": judge_email_lower,
+                "submission_id": submission_id_str,
             },
         )
         return True
     except Exception as e:
-        st.write(f"DEBUG: Save allocation error: {str(e)}")
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate" in error_msg or "constraint" in error_msg:
+            return True
+        st.error(f"❌ Database Error: {str(e)}")
         return False
 
 
@@ -3480,11 +3491,15 @@ def render_judge_portal(judge_email: str) -> None:
         submissions = local_submissions()
 
     allocated_submission_ids = load_judge_allocations(judge_email)
+    st.sidebar.caption(f"DEBUG: Allocations for {judge_email}: {allocated_submission_ids}")
+
     if allocated_submission_ids:
         submissions = submissions[
             submissions["submission_id"].astype(str).isin([str(sid) for sid in allocated_submission_ids])
         ]
         st.info(f"📋 You are assigned to {len(submissions)} project(s).")
+    else:
+        st.sidebar.caption("ℹ️ No projects assigned. Admin must allocate projects to you.")
 
     try:
         my_reviews = load_my_review_summary(judge_email)
