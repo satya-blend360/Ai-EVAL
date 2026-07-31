@@ -1525,11 +1525,10 @@ def ensure_judge_allocations_table() -> None:
     run_db_query(
         f"""
         CREATE TABLE IF NOT EXISTS {DB_PREFIX}.judge_allocations (
-            allocation_id STRING DEFAULT 'alloc_' || SUBSTR(MD5(CAST(NOW() AS VARCHAR) || RAND()), 1, 12),
-            judge_email STRING NOT NULL,
-            submission_id STRING NOT NULL,
-            created_at TIMESTAMP DEFAULT current_timestamp(),
-            PRIMARY KEY (allocation_id)
+            allocation_id STRING,
+            judge_email STRING,
+            submission_id STRING,
+            created_at TIMESTAMP
         )
         USING DELTA
         """
@@ -2067,18 +2066,21 @@ def save_judge_allocation(judge_email: str, submission_id: str) -> bool:
 
     try:
         ensure_judge_allocations_table()
+        allocation_id = f"alloc_{uuid.uuid4().hex[:12]}"
         run_db_query(
             f"""
-            INSERT INTO {DB_PREFIX}.judge_allocations (judge_email, submission_id, created_at)
-            VALUES (:judge_email, :submission_id, current_timestamp())
+            INSERT INTO {DB_PREFIX}.judge_allocations (allocation_id, judge_email, submission_id, created_at)
+            VALUES (:allocation_id, :judge_email, :submission_id, current_timestamp())
             """,
             {
+                "allocation_id": allocation_id,
                 "judge_email": judge_email.lower(),
-                "submission_id": submission_id,
+                "submission_id": str(submission_id),
             },
         )
         return True
-    except Exception:
+    except Exception as e:
+        st.write(f"DEBUG: Save allocation error: {str(e)}")
         return False
 
 
@@ -2979,11 +2981,16 @@ def render_admin_dashboard(judge_email: str) -> None:
             project_submission = submissions[submissions["project_name"] == selected_project]
             if not project_submission.empty:
                 submission_id = str(project_submission.iloc[0]["submission_id"])
-                if save_judge_allocation(selected_judge, submission_id):
-                    st.success(f"✅ {selected_project} assigned to {selected_judge}")
-                    st.rerun()
-                else:
-                    st.error("Failed to assign project.")
+                try:
+                    if save_judge_allocation(selected_judge, submission_id):
+                        st.success(f"✅ {selected_project} assigned to {selected_judge}")
+                        st.rerun()
+                    else:
+                        st.error("Failed to assign project. Check database connection.")
+                except Exception as e:
+                    st.error(f"Error assigning project: {str(e)}")
+            else:
+                st.error("Project not found in submissions.")
 
         st.markdown("**Current Allocations by Judge:**")
         all_judges = list(current_judges.keys())
