@@ -255,20 +255,29 @@ JUDGE_CREDENTIALS_FILE = Path(APP_ROOT) / "judge_credentials.json"
 def load_judge_credentials() -> Dict[str, str]:
     """Return a map of lowercased judge email -> password.
 
-    Judges are ONLY loaded from ``judge_credentials.json`` which is created
-    and managed by the admin through the Admin Dashboard.
-    e.g. ``{"nikhil.goel@blend360.com": "Goel@123"}``
+    Judges are loaded from Databricks ``judges`` table.
+    They are created and managed by the admin through the Admin Dashboard.
     """
     credentials: Dict[str, str] = {}
 
+    if not db_configured():
+        local = st.session_state.get("local_judges", [])
+        for judge in local:
+            email = str(judge.get("judge_email", "")).strip().lower()
+            pwd = str(judge.get("password", ""))
+            if email and pwd:
+                credentials[email] = pwd
+        return credentials
+
     try:
-        if JUDGE_CREDENTIALS_FILE.exists():
-            with open(JUDGE_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    for email, pwd in data.items():
-                        if email and pwd is not None:
-                            credentials[str(email).strip().lower()] = str(pwd)
+        ensure_judges_table()
+        result = run_db_query(f"SELECT judge_email, password FROM {DB_PREFIX}.judges")
+        if result:
+            for row in result:
+                email = str(row[0]).strip().lower()
+                pwd = str(row[1])
+                if email and pwd:
+                    credentials[email] = pwd
     except Exception:
         pass
 
@@ -1530,6 +1539,25 @@ def record_judge_login(judge_email: str) -> None:
     )
 
 
+def ensure_judges_table() -> None:
+    """Create judges table in Databricks if it doesn't exist."""
+    if st.session_state.get("judges_table_ready"):
+        return
+    if not db_configured():
+        return
+    run_db_query(
+        f"""
+        CREATE TABLE IF NOT EXISTS {DB_PREFIX}.judges (
+            judge_email STRING,
+            password STRING,
+            created_at TIMESTAMP
+        )
+        USING DELTA
+        """
+    )
+    st.session_state["judges_table_ready"] = True
+
+
 def ensure_judge_allocations_table() -> None:
     if st.session_state.get("judge_allocations_table_ready"):
         return
@@ -2039,31 +2067,54 @@ def update_ai_result(submission_id: str, ai_score: float, ai_summary: str) -> No
 
 
 def save_judge_credentials(judge_email: str, judge_password: str) -> bool:
-    """Save judge email and password to judge_credentials.json."""
-    try:
-        credentials = {}
-        if JUDGE_CREDENTIALS_FILE.exists():
-            with open(JUDGE_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
-                credentials = json.load(f)
+    """Save judge email and password to Databricks."""
+    judge_email_lower = judge_email.strip().lower()
 
-        credentials[judge_email.strip().lower()] = judge_password
-        with open(JUDGE_CREDENTIALS_FILE, "w", encoding="utf-8") as f:
-            json.dump(credentials, f, indent=2)
+    if not db_configured():
+        local = st.session_state.setdefault("local_judges", [])
+        for judge in local:
+            if judge.get("judge_email") == judge_email_lower:
+                judge["password"] = judge_password
+                return True
+        local.append({"judge_email": judge_email_lower, "password": judge_password})
         return True
-    except Exception:
+
+    try:
+        ensure_judges_table()
+        run_db_query(
+            f"""
+            MERGE INTO {DB_PREFIX}.judges AS t
+            USING (SELECT :email AS judge_email) AS s
+            ON lower(t.judge_email) = lower(s.judge_email)
+            WHEN MATCHED THEN UPDATE SET password = :password, created_at = current_timestamp()
+            WHEN NOT MATCHED THEN INSERT (judge_email, password, created_at)
+                VALUES (:email, :password, current_timestamp())
+            """,
+            {
+                "email": judge_email_lower,
+                "password": judge_password,
+            },
+        )
+        return True
+    except Exception as e:
         return False
 
 
 def delete_judge_credentials(judge_email: str) -> bool:
-    """Delete a judge's credentials from judge_credentials.json."""
-    try:
-        if JUDGE_CREDENTIALS_FILE.exists():
-            with open(JUDGE_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
-                credentials = json.load(f)
+    """Delete a judge's credentials from Databricks."""
+    judge_email_lower = judge_email.strip().lower()
 
-            credentials.pop(judge_email.strip().lower(), None)
-            with open(JUDGE_CREDENTIALS_FILE, "w", encoding="utf-8") as f:
-                json.dump(credentials, f, indent=2)
+    if not db_configured():
+        local = st.session_state.setdefault("local_judges", [])
+        st.session_state["local_judges"] = [j for j in local if j.get("judge_email") != judge_email_lower]
+        return True
+
+    try:
+        ensure_judges_table()
+        run_db_query(
+            f"DELETE FROM {DB_PREFIX}.judges WHERE lower(judge_email) = lower(:email)",
+            {"email": judge_email_lower},
+        )
         return True
     except Exception:
         return False
