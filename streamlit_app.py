@@ -2083,12 +2083,8 @@ def save_judge_credentials(judge_email: str, judge_password: str) -> bool:
         ensure_judges_table()
         run_db_query(
             f"""
-            MERGE INTO {DB_PREFIX}.judges AS t
-            USING (SELECT :email AS judge_email) AS s
-            ON lower(t.judge_email) = lower(s.judge_email)
-            WHEN MATCHED THEN UPDATE SET password = :password, created_at = current_timestamp()
-            WHEN NOT MATCHED THEN INSERT (judge_email, password, created_at)
-                VALUES (:email, :password, current_timestamp())
+            INSERT INTO {DB_PREFIX}.judges (judge_email, password, created_at)
+            VALUES (:email, :password, current_timestamp())
             """,
             {
                 "email": judge_email_lower,
@@ -2097,6 +2093,20 @@ def save_judge_credentials(judge_email: str, judge_password: str) -> bool:
         )
         return True
     except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate" in error_msg:
+            try:
+                run_db_query(
+                    f"UPDATE {DB_PREFIX}.judges SET password = :password WHERE lower(judge_email) = lower(:email)",
+                    {
+                        "email": judge_email_lower,
+                        "password": judge_password,
+                    },
+                )
+                return True
+            except Exception:
+                return False
+        st.error(f"❌ Error saving judge: {str(e)}")
         return False
 
 
