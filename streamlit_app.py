@@ -2196,6 +2196,38 @@ def load_judge_allocations(judge_email: str = "") -> List[str]:
         return []
 
 
+def delete_judge_allocation(judge_email: str, submission_id: str) -> bool:
+    """Remove a judge-project allocation."""
+    judge_email_lower = judge_email.strip().lower()
+    submission_id_str = str(submission_id)
+
+    if not db_configured():
+        local = st.session_state.setdefault("local_judge_allocations", [])
+        st.session_state["local_judge_allocations"] = [
+            a
+            for a in local
+            if not (a.get("judge_email") == judge_email_lower and a.get("submission_id") == submission_id_str)
+        ]
+        return True
+
+    try:
+        ensure_judge_allocations_table()
+        run_db_query(
+            f"""
+            DELETE FROM {DB_PREFIX}.judge_allocations
+            WHERE lower(judge_email) = lower(:judge_email) AND submission_id = :submission_id
+            """,
+            {
+                "judge_email": judge_email_lower,
+                "submission_id": submission_id_str,
+            },
+        )
+        return True
+    except Exception as e:
+        st.error(f"❌ Error removing allocation: {str(e)}")
+        return False
+
+
 def run_standard_submission_evaluation(selected: Dict[str, Any]):
     data = load_evaluation_dataset()
     evaluator = create_ai_evaluator()
@@ -3072,20 +3104,30 @@ def render_admin_dashboard(judge_email: str) -> None:
     st.caption("Assign projects to specific judges. Judges will only see their assigned projects.")
 
     if not submissions.empty and current_judges:
+        # A project can only be assigned to one judge: hide already-assigned projects.
+        all_allocated_ids = {str(sid) for sid in load_judge_allocations()}
+        unassigned_submissions = submissions[
+            ~submissions["submission_id"].astype(str).isin(all_allocated_ids)
+        ]
+
         alloc_col1, alloc_col2 = st.columns(2)
 
         with alloc_col1:
             selected_judge = st.selectbox("Select Judge:", list(current_judges.keys()), key="alloc_judge_select")
 
         with alloc_col2:
-            selected_project = st.selectbox(
-                "Select Project:",
-                submissions["project_name"].unique(),
-                key="alloc_project_select"
-            )
+            if unassigned_submissions.empty:
+                selected_project = None
+                st.selectbox("Select Project:", ["All projects are already assigned"], disabled=True, key="alloc_project_select_empty")
+            else:
+                selected_project = st.selectbox(
+                    "Select Project:",
+                    unassigned_submissions["project_name"].unique(),
+                    key="alloc_project_select"
+                )
 
-        if st.button("Assign Project to Judge", use_container_width=True):
-            project_submission = submissions[submissions["project_name"] == selected_project]
+        if st.button("Assign Project to Judge", use_container_width=True, disabled=selected_project is None):
+            project_submission = unassigned_submissions[unassigned_submissions["project_name"] == selected_project]
             if not project_submission.empty:
                 submission_id = str(project_submission.iloc[0]["submission_id"])
                 try:
@@ -3098,6 +3140,32 @@ def render_admin_dashboard(judge_email: str) -> None:
                     st.error(f"Error assigning project: {str(e)}")
             else:
                 st.error("Project not found in submissions.")
+
+        st.markdown("**Remove Assigned Project:**")
+        remove_col1, remove_col2 = st.columns(2)
+        with remove_col1:
+            remove_judge = st.selectbox("Judge:", list(current_judges.keys()), key="remove_alloc_judge_select")
+        judge_allocated_ids = [str(sid) for sid in load_judge_allocations(remove_judge)]
+        judge_projects = submissions[submissions["submission_id"].astype(str).isin(judge_allocated_ids)]
+        with remove_col2:
+            if judge_projects.empty:
+                remove_project = None
+                st.selectbox("Assigned Project:", ["No projects assigned"], disabled=True, key="remove_alloc_project_empty")
+            else:
+                remove_project = st.selectbox(
+                    "Assigned Project:",
+                    judge_projects["project_name"].unique(),
+                    key="remove_alloc_project_select"
+                )
+        if st.button("Remove Assignment", use_container_width=True, disabled=remove_project is None):
+            remove_submission = judge_projects[judge_projects["project_name"] == remove_project]
+            if not remove_submission.empty:
+                remove_submission_id = str(remove_submission.iloc[0]["submission_id"])
+                if delete_judge_allocation(remove_judge, remove_submission_id):
+                    st.success(f"✅ Removed {remove_project} from {remove_judge}")
+                    st.rerun()
+                else:
+                    st.error("Failed to remove assignment.")
 
         st.markdown("**Current Allocations by Judge:**")
         all_judges = list(current_judges.keys())
