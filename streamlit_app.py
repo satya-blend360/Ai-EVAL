@@ -271,21 +271,17 @@ def load_judge_credentials() -> Dict[str, str]:
 
     try:
         ensure_judges_table()
-        query = f"SELECT judge_email, password FROM {DB_PREFIX}.judges"
-        result = run_db_query(query)
-
-        if result:
-            for row in result:
-                email = str(row[0]).strip().lower()
-                pwd = str(row[1])
+        result = run_db_query(
+            f"SELECT judge_email, password FROM {DB_PREFIX}.judges", fetch=True
+        )
+        if result is not None and not result.empty:
+            for _, row in result.iterrows():
+                email = str(row["judge_email"]).strip().lower()
+                pwd = str(row["password"])
                 if email and pwd:
                     credentials[email] = pwd
-        else:
-            pass
-    except Exception as e:
-        import traceback
-        st.write(f"DEBUG: Error loading judges: {str(e)}")
-        st.write(f"DEBUG: Traceback: {traceback.format_exc()}")
+    except Exception:
+        pass
 
     return credentials
 
@@ -2192,11 +2188,11 @@ def load_judge_allocations(judge_email: str = "") -> List[str]:
             params["judge_email"] = judge_email.lower()
         query += " ORDER BY created_at DESC"
 
-        result = run_db_query(query, params)
-        if result:
-            return [str(row[0]) for row in result]
+        result = run_db_query(query, params, fetch=True)
+        if result is not None and not result.empty:
+            return [str(sid) for sid in result["submission_id"].tolist()]
         return []
-    except Exception as e:
+    except Exception:
         return []
 
 
@@ -2814,9 +2810,6 @@ def render_login() -> None:
             admin_credentials = load_admin_credentials()
             judge_credentials = load_judge_credentials()
 
-            st.caption(f"DEBUG: Admins found: {len(admin_credentials)}, Judges found: {len(judge_credentials)}")
-            st.caption(f"DEBUG: Judges list: {list(judge_credentials.keys())}")
-
             if admin_credentials and normalized_email in admin_credentials:
                 if password != admin_credentials[normalized_email]:
                     error_message = "Incorrect password."
@@ -3069,7 +3062,6 @@ def render_admin_dashboard(judge_email: str) -> None:
 
     st.markdown("**Current Judges:**")
     current_judges = load_judge_credentials()
-    st.caption(f"DEBUG: Loaded {len(current_judges)} judges from Databricks")
     if current_judges:
         judges_df = pd.DataFrame([{"Email": email} for email in current_judges.keys()])
         st.dataframe(judges_df, use_container_width=True, hide_index=True)
@@ -3111,16 +3103,10 @@ def render_admin_dashboard(judge_email: str) -> None:
         all_judges = list(current_judges.keys())
         for judge_email in all_judges:
             allocated_submission_ids = load_judge_allocations(judge_email)
-            st.caption(f"{judge_email}: {len(allocated_submission_ids)} projects allocated (IDs: {allocated_submission_ids})")
             if allocated_submission_ids:
-                submission_ids_to_match = []
-                for sid in allocated_submission_ids:
-                    try:
-                        submission_ids_to_match.append(int(sid))
-                    except ValueError:
-                        submission_ids_to_match.append(sid)
-
-                allocated_projects = submissions[submissions["submission_id"].isin(submission_ids_to_match)]
+                allocated_projects = submissions[
+                    submissions["submission_id"].astype(str).isin([str(sid) for sid in allocated_submission_ids])
+                ]
                 if not allocated_projects.empty:
                     st.write(f"**{judge_email}:**")
                     st.dataframe(
@@ -3133,6 +3119,8 @@ def render_admin_dashboard(judge_email: str) -> None:
                     )
                 else:
                     st.caption(f"{judge_email}: Allocated IDs don't match any projects")
+            else:
+                st.caption(f"{judge_email}: No projects assigned")
 
     elif not current_judges:
         st.info("Add judges first using the Judge Management section above.")
@@ -3592,7 +3580,6 @@ def render_judge_portal(judge_email: str) -> None:
         submissions = local_submissions()
 
     allocated_submission_ids = load_judge_allocations(judge_email)
-    st.sidebar.caption(f"DEBUG: Allocations for {judge_email}: {allocated_submission_ids}")
 
     if allocated_submission_ids:
         submissions = submissions[
