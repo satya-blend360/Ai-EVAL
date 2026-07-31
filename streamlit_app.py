@@ -255,31 +255,42 @@ JUDGE_CREDENTIALS_FILE = Path(APP_ROOT) / "judge_credentials.json"
 def load_judge_credentials() -> Dict[str, str]:
     """Return a map of lowercased judge email -> password.
 
-    Judges are added in ``judge_credentials.json`` (easiest place to add many),
-    e.g. ``{"saisrisatya.padala@blend360.com": "padala@123"}``. An optional
-    ``JUDGE_CREDENTIALS`` env var holding the same JSON mapping is also merged in.
-    When at least one credential is configured, login becomes a strict whitelist:
-    only those emails with the matching password can access the Judge Portal.
+    Judges are ONLY loaded from ``judge_credentials.json`` which is created
+    and managed by the admin through the Admin Dashboard.
+    e.g. ``{"nikhil.goel@blend360.com": "Goel@123"}``
     """
     credentials: Dict[str, str] = {}
-
-    def _merge(raw: Any) -> None:
-        if isinstance(raw, dict):
-            for email, pwd in raw.items():
-                if email and pwd is not None:
-                    credentials[str(email).strip().lower()] = str(pwd)
 
     try:
         if JUDGE_CREDENTIALS_FILE.exists():
             with open(JUDGE_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
-                _merge(json.load(f))
+                data = json.load(f)
+                if isinstance(data, dict):
+                    for email, pwd in data.items():
+                        if email and pwd is not None:
+                            credentials[str(email).strip().lower()] = str(pwd)
     except Exception:
         pass
+
+    return credentials
+
+
+def load_admin_credentials() -> Dict[str, str]:
+    """Return a map of lowercased admin email -> password.
+
+    Admin credentials are loaded from JUDGE_CREDENTIALS env var (legacy name).
+    Admins can manage judges and assign projects through the Admin Dashboard.
+    """
+    credentials: Dict[str, str] = {}
 
     env_raw = get_secret("JUDGE_CREDENTIALS").strip()
     if env_raw:
         try:
-            _merge(json.loads(env_raw))
+            data = json.loads(env_raw)
+            if isinstance(data, dict):
+                for email, pwd in data.items():
+                    if email and pwd is not None:
+                        credentials[str(email).strip().lower()] = str(pwd)
         except Exception:
             pass
 
@@ -381,7 +392,9 @@ def is_company_email(email: str) -> bool:
 
 
 def is_admin_email(email: str) -> bool:
-    return email.strip().lower() == ADMIN_JUDGE_EMAIL
+    """Check if email is registered as an admin (from JUDGE_CREDENTIALS env var)."""
+    admin_creds = load_admin_credentials()
+    return email.strip().lower() in admin_creds
 
 
 def is_email(value: str) -> bool:
@@ -2717,7 +2730,7 @@ def render_public_submission() -> None:
 def render_login() -> None:
     st.markdown('<div class="main-title">Judge Portal</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="sub-title">Sign in with your Blend360 email to review submitted projects.</div>',
+        '<div class="sub-title">Sign in with your Blend360 email to access the Judge Portal or Admin Dashboard.</div>',
         unsafe_allow_html=True,
     )
     with st.form("judge_login_form"):
@@ -2726,26 +2739,40 @@ def render_login() -> None:
         submitted = st.form_submit_button("Log in", use_container_width=True)
     if submitted:
         normalized_email = email.strip().lower()
-        credentials = load_judge_credentials()
         error_message = None
+
         if not is_company_email(normalized_email):
             error_message = "Use a Blend360 company email address."
-        elif credentials:
-            # Strict whitelist: only registered judges with the right password.
-            expected = credentials.get(normalized_email)
-            if expected is None:
-                error_message = "This email is not registered for the Judge Portal. Ask the admin to add you."
-            elif password != expected:
-                error_message = "Incorrect password."
-        elif password != PORTAL_PASSWORD:
-            error_message = "Incorrect password."
+        else:
+            admin_credentials = load_admin_credentials()
+            judge_credentials = load_judge_credentials()
+
+            if admin_credentials and normalized_email in admin_credentials:
+                if password != admin_credentials[normalized_email]:
+                    error_message = "Incorrect password."
+                else:
+                    st.session_state["judge_email"] = normalized_email
+                    st.session_state["judge_logged_in"] = True
+                    st.rerun()
+            elif judge_credentials and normalized_email in judge_credentials:
+                if password != judge_credentials[normalized_email]:
+                    error_message = "Incorrect password."
+                else:
+                    st.session_state["judge_email"] = normalized_email
+                    st.session_state["judge_logged_in"] = True
+                    st.rerun()
+            elif admin_credentials or judge_credentials:
+                error_message = "This email is not registered. Ask the admin to add you."
+            else:
+                if password != PORTAL_PASSWORD:
+                    error_message = "Incorrect password."
+                else:
+                    st.session_state["judge_email"] = normalized_email
+                    st.session_state["judge_logged_in"] = True
+                    st.rerun()
 
         if error_message:
             st.error(error_message)
-        else:
-            st.session_state["judge_email"] = normalized_email
-            st.session_state["judge_logged_in"] = True
-            st.rerun()
 
 
 def show_video_or_link(video_url: str) -> None:
