@@ -1579,6 +1579,76 @@ def ensure_judge_allocations_table() -> None:
     st.session_state["judge_allocations_table_ready"] = True
 
 
+def ensure_app_settings_table() -> None:
+    if st.session_state.get("app_settings_table_ready"):
+        return
+    if not db_configured():
+        return
+    run_db_query(
+        f"""
+        CREATE TABLE IF NOT EXISTS {DB_PREFIX}.app_settings (
+            setting_key STRING,
+            setting_value STRING,
+            updated_at TIMESTAMP
+        )
+        USING DELTA
+        """
+    )
+    st.session_state["app_settings_table_ready"] = True
+
+
+def get_app_setting(setting_key: str, default: str = "") -> str:
+    """Read an app-wide setting from Databricks (falls back to session state)."""
+    if not db_configured():
+        return str(st.session_state.get("local_app_settings", {}).get(setting_key, default))
+
+    try:
+        ensure_app_settings_table()
+        result = run_db_query(
+            f"SELECT setting_value FROM {DB_PREFIX}.app_settings WHERE setting_key = :setting_key",
+            {"setting_key": setting_key},
+            fetch=True,
+        )
+        if result is not None and not result.empty:
+            return str(result.iloc[0]["setting_value"])
+    except Exception:
+        pass
+    return default
+
+
+def save_app_setting(setting_key: str, setting_value: str) -> bool:
+    """Save an app-wide setting to Databricks (falls back to session state)."""
+    if not db_configured():
+        st.session_state.setdefault("local_app_settings", {})[setting_key] = setting_value
+        return True
+
+    try:
+        ensure_app_settings_table()
+        run_db_query(
+            f"""
+            MERGE INTO {DB_PREFIX}.app_settings AS t
+            USING (SELECT :setting_key AS setting_key) AS s
+            ON t.setting_key = s.setting_key
+            WHEN MATCHED THEN UPDATE SET setting_value = :setting_value, updated_at = current_timestamp()
+            WHEN NOT MATCHED THEN INSERT (setting_key, setting_value, updated_at)
+                VALUES (:setting_key, :setting_value, current_timestamp())
+            """,
+            {
+                "setting_key": setting_key,
+                "setting_value": setting_value,
+            },
+        )
+        return True
+    except Exception as e:
+        st.error(f"❌ Error saving setting: {str(e)}")
+        return False
+
+
+def judges_can_see_ai_scores() -> bool:
+    """Whether the admin has enabled AI score visibility for judges."""
+    return get_app_setting("show_ai_scores_to_judges", "false").strip().lower() == "true"
+
+
 def empty_score_details() -> pd.DataFrame:
     return pd.DataFrame(
         columns=[
@@ -3016,6 +3086,18 @@ def render_admin_dashboard(judge_email: str) -> None:
     st.markdown('<div class="section-header">AI Semantic Correctness - Review & Refresh</div>', unsafe_allow_html=True)
     st.caption("View and refresh AI semantic correctness scores for individual projects.")
 
+    ai_scores_visible = judges_can_see_ai_scores()
+    toggle_value = st.toggle(
+        "Show AI scores to judges",
+        value=ai_scores_visible,
+        help="When on, judges see the AI Semantic Correctness section for their assigned projects. Stored in Databricks, applies to all judges.",
+        key="show_ai_scores_toggle",
+    )
+    if toggle_value != ai_scores_visible:
+        if save_app_setting("show_ai_scores_to_judges", "true" if toggle_value else "false"):
+            st.success(f"✅ Judges can {'now' if toggle_value else 'no longer'} see AI scores.")
+            st.rerun()
+
     if not submissions.empty:
         project_options = submissions[submissions["submission_json"].notna() & (submissions["submission_json"] != "")].copy()
         if not project_options.empty:
@@ -3736,7 +3818,9 @@ def render_judge_portal(judge_email: str) -> None:
                 st.button("🔗 Open prototype", disabled=True, use_container_width=True)
 
         st.divider()
-        render_floating_eval_button(selected)
+        show_ai_to_this_user = is_admin_email(judge_email) or judges_can_see_ai_scores()
+        if show_ai_to_this_user:
+            render_floating_eval_button(selected)
     else:
         st.markdown('<div class="section-header">All Submissions</div>', unsafe_allow_html=True)
         filter_col, status_col = st.columns([0.65, 0.35])
@@ -3820,13 +3904,14 @@ def render_judge_portal(judge_email: str) -> None:
         st.markdown('<div class="section-header">Submitted JSON</div>', unsafe_allow_html=True)
         render_submission_json(submission_json)
 
-        st.markdown('<div class="section-header">AI Semantic Correctness</div>', unsafe_allow_html=True)
-        render_correctness_assessment(
-            selected.get("submission_json") or "",
-            selected.get("correctness_summary") or "",
-            selected.get("correctness_score"),
-            submission_id=str(selected.get("submission_id") or ""),
-        )
+        if show_ai_to_this_user:
+            st.markdown('<div class="section-header">AI Semantic Correctness</div>', unsafe_allow_html=True)
+            render_correctness_assessment(
+                selected.get("submission_json") or "",
+                selected.get("correctness_summary") or "",
+                selected.get("correctness_score"),
+                submission_id=str(selected.get("submission_id") or ""),
+            )
 
         st.markdown('<div class="section-header">Sales Brief / One-Pager</div>', unsafe_allow_html=True)
         render_sales_brief_upload(selected.get("screenshots_json") or "")
