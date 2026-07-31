@@ -3033,7 +3033,10 @@ def render_admin_dashboard(judge_email: str) -> None:
             new_judge_password = st.text_input("Password:", type="password", placeholder="Enter password")
             if st.form_submit_button("Add Judge", use_container_width=True):
                 if new_judge_email and new_judge_password:
-                    if save_judge_credentials(new_judge_email, new_judge_password):
+                    current_judges = load_judge_credentials()
+                    if new_judge_email in current_judges:
+                        st.error(f"⚠️ Judge {new_judge_email} already exists. Use 'Remove Judge' to delete first, or update password directly.")
+                    elif save_judge_credentials(new_judge_email, new_judge_password):
                         st.success(f"✅ Judge {new_judge_email} added successfully!")
                         st.rerun()
                     else:
