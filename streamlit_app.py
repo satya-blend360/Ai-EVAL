@@ -2814,6 +2814,9 @@ def render_login() -> None:
             admin_credentials = load_admin_credentials()
             judge_credentials = load_judge_credentials()
 
+            st.caption(f"DEBUG: Admins found: {len(admin_credentials)}, Judges found: {len(judge_credentials)}")
+            st.caption(f"DEBUG: Judges list: {list(judge_credentials.keys())}")
+
             if admin_credentials and normalized_email in admin_credentials:
                 if password != admin_credentials[normalized_email]:
                     error_message = "Incorrect password."
