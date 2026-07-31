@@ -2093,16 +2093,19 @@ def load_judge_allocations(judge_email: str = "") -> List[str]:
         return [a["submission_id"] for a in local]
 
     try:
+        ensure_judge_allocations_table()
         query = f"SELECT submission_id FROM {DB_PREFIX}.judge_allocations"
         params = {}
         if judge_email:
             query += " WHERE lower(judge_email) = lower(:judge_email)"
-            params["judge_email"] = judge_email
+            params["judge_email"] = judge_email.lower()
         query += " ORDER BY created_at DESC"
 
         result = run_db_query(query, params)
-        return [row[0] for row in result] if result else []
-    except Exception:
+        if result:
+            return [str(row[0]) for row in result]
+        return []
+    except Exception as e:
         return []
 
 
@@ -2996,8 +2999,16 @@ def render_admin_dashboard(judge_email: str) -> None:
         all_judges = list(current_judges.keys())
         for judge_email in all_judges:
             allocated_submission_ids = load_judge_allocations(judge_email)
+            st.caption(f"{judge_email}: {len(allocated_submission_ids)} projects allocated (IDs: {allocated_submission_ids})")
             if allocated_submission_ids:
-                allocated_projects = submissions[submissions["submission_id"].isin([int(sid) if sid.isdigit() else sid for sid in allocated_submission_ids])]
+                submission_ids_to_match = []
+                for sid in allocated_submission_ids:
+                    try:
+                        submission_ids_to_match.append(int(sid))
+                    except ValueError:
+                        submission_ids_to_match.append(sid)
+
+                allocated_projects = submissions[submissions["submission_id"].isin(submission_ids_to_match)]
                 if not allocated_projects.empty:
                     st.write(f"**{judge_email}:**")
                     st.dataframe(
@@ -3008,8 +3019,8 @@ def render_admin_dashboard(judge_email: str) -> None:
                         use_container_width=True,
                         hide_index=True,
                     )
-            else:
-                st.caption(f"{judge_email}: No projects assigned")
+                else:
+                    st.caption(f"{judge_email}: Allocated IDs don't match any projects")
 
     elif not current_judges:
         st.info("Add judges first using the Judge Management section above.")
