@@ -1517,6 +1517,26 @@ def record_judge_login(judge_email: str) -> None:
     )
 
 
+def ensure_judge_allocations_table() -> None:
+    if st.session_state.get("judge_allocations_table_ready"):
+        return
+    if not db_configured():
+        return
+    run_db_query(
+        f"""
+        CREATE TABLE IF NOT EXISTS {DB_PREFIX}.judge_allocations (
+            allocation_id STRING DEFAULT 'alloc_' || SUBSTR(MD5(CAST(NOW() AS VARCHAR) || RAND()), 1, 12),
+            judge_email STRING NOT NULL,
+            submission_id STRING NOT NULL,
+            created_at TIMESTAMP DEFAULT current_timestamp(),
+            PRIMARY KEY (allocation_id)
+        )
+        USING DELTA
+        """
+    )
+    st.session_state["judge_allocations_table_ready"] = True
+
+
 def empty_score_details() -> pd.DataFrame:
     return pd.DataFrame(
         columns=[
@@ -2004,6 +2024,84 @@ def update_ai_result(submission_id: str, ai_score: float, ai_summary: str) -> No
         },
     )
     load_submissions.clear()
+
+
+def save_judge_credentials(judge_email: str, judge_password: str) -> bool:
+    """Save judge email and password to judge_credentials.json."""
+    try:
+        credentials = {}
+        if JUDGE_CREDENTIALS_FILE.exists():
+            with open(JUDGE_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+                credentials = json.load(f)
+
+        credentials[judge_email.strip().lower()] = judge_password
+        with open(JUDGE_CREDENTIALS_FILE, "w", encoding="utf-8") as f:
+            json.dump(credentials, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def delete_judge_credentials(judge_email: str) -> bool:
+    """Delete a judge's credentials from judge_credentials.json."""
+    try:
+        if JUDGE_CREDENTIALS_FILE.exists():
+            with open(JUDGE_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+                credentials = json.load(f)
+
+            credentials.pop(judge_email.strip().lower(), None)
+            with open(JUDGE_CREDENTIALS_FILE, "w", encoding="utf-8") as f:
+                json.dump(credentials, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def save_judge_allocation(judge_email: str, submission_id: str) -> bool:
+    """Save judge-project allocation to Databricks."""
+    if not db_configured():
+        st.session_state.setdefault("local_judge_allocations", []).append(
+            {"judge_email": judge_email.lower(), "submission_id": submission_id}
+        )
+        return True
+
+    try:
+        ensure_judge_allocations_table()
+        run_db_query(
+            f"""
+            INSERT INTO {DB_PREFIX}.judge_allocations (judge_email, submission_id, created_at)
+            VALUES (:judge_email, :submission_id, current_timestamp())
+            """,
+            {
+                "judge_email": judge_email.lower(),
+                "submission_id": submission_id,
+            },
+        )
+        return True
+    except Exception:
+        return False
+
+
+def load_judge_allocations(judge_email: str = "") -> List[str]:
+    """Load list of submission IDs allocated to a judge."""
+    if not db_configured():
+        local = st.session_state.get("local_judge_allocations", [])
+        if judge_email:
+            return [a["submission_id"] for a in local if a.get("judge_email") == judge_email.lower()]
+        return [a["submission_id"] for a in local]
+
+    try:
+        query = f"SELECT submission_id FROM {DB_PREFIX}.judge_allocations"
+        params = {}
+        if judge_email:
+            query += " WHERE lower(judge_email) = lower(:judge_email)"
+            params["judge_email"] = judge_email
+        query += " ORDER BY created_at DESC"
+
+        result = run_db_query(query, params)
+        return [row[0] for row in result] if result else []
+    except Exception:
+        return []
 
 
 def run_standard_submission_evaluation(selected: Dict[str, Any]):
@@ -2819,6 +2917,98 @@ def render_admin_dashboard(judge_email: str) -> None:
     else:
         st.info("No submissions available yet.")
 
+    st.markdown('<div class="section-header">Judge Management</div>', unsafe_allow_html=True)
+    st.caption("Add, edit, or remove judge credentials.")
+
+    judge_mgmt_col1, judge_mgmt_col2 = st.columns(2)
+
+    with judge_mgmt_col1:
+        with st.form("add_judge_form"):
+            st.subheader("Add New Judge")
+            new_judge_email = st.text_input("Judge Email:", placeholder="judge@example.com").strip().lower()
+            new_judge_password = st.text_input("Password:", type="password", placeholder="Enter password")
+            if st.form_submit_button("Add Judge", use_container_width=True):
+                if new_judge_email and new_judge_password:
+                    if save_judge_credentials(new_judge_email, new_judge_password):
+                        st.success(f"✅ Judge {new_judge_email} added successfully!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to add judge.")
+                else:
+                    st.error("Please enter both email and password.")
+
+    with judge_mgmt_col2:
+        st.subheader("Remove Judge")
+        current_judges = load_judge_credentials()
+        if current_judges:
+            judge_to_delete = st.selectbox("Select judge to remove:", list(current_judges.keys()), key="delete_judge_select")
+            if st.button("Remove Judge", use_container_width=True):
+                if delete_judge_credentials(judge_to_delete):
+                    st.success(f"✅ Judge {judge_to_delete} removed.")
+                    st.rerun()
+                else:
+                    st.error("Failed to remove judge.")
+        else:
+            st.caption("No judges configured yet.")
+
+    st.markdown("**Current Judges:**")
+    current_judges = load_judge_credentials()
+    if current_judges:
+        judges_df = pd.DataFrame([{"Email": email} for email in current_judges.keys()])
+        st.dataframe(judges_df, use_container_width=True, hide_index=True)
+    else:
+        st.caption("No judges configured.")
+
+    st.markdown('<div class="section-header">Project Allocation to Judges</div>', unsafe_allow_html=True)
+    st.caption("Assign projects to specific judges. Judges will only see their assigned projects.")
+
+    if not submissions.empty and current_judges:
+        alloc_col1, alloc_col2 = st.columns(2)
+
+        with alloc_col1:
+            selected_judge = st.selectbox("Select Judge:", list(current_judges.keys()), key="alloc_judge_select")
+
+        with alloc_col2:
+            selected_project = st.selectbox(
+                "Select Project:",
+                submissions["project_name"].unique(),
+                key="alloc_project_select"
+            )
+
+        if st.button("Assign Project to Judge", use_container_width=True):
+            project_submission = submissions[submissions["project_name"] == selected_project]
+            if not project_submission.empty:
+                submission_id = str(project_submission.iloc[0]["submission_id"])
+                if save_judge_allocation(selected_judge, submission_id):
+                    st.success(f"✅ {selected_project} assigned to {selected_judge}")
+                    st.rerun()
+                else:
+                    st.error("Failed to assign project.")
+
+        st.markdown("**Current Allocations by Judge:**")
+        all_judges = list(current_judges.keys())
+        for judge_email in all_judges:
+            allocated_submission_ids = load_judge_allocations(judge_email)
+            if allocated_submission_ids:
+                allocated_projects = submissions[submissions["submission_id"].isin([int(sid) if sid.isdigit() else sid for sid in allocated_submission_ids])]
+                if not allocated_projects.empty:
+                    st.write(f"**{judge_email}:**")
+                    st.dataframe(
+                        allocated_projects[["project_name", "submitter_name"]].rename(columns={
+                            "project_name": "Project",
+                            "submitter_name": "Submitter"
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+            else:
+                st.caption(f"{judge_email}: No projects assigned")
+
+    elif not current_judges:
+        st.info("Add judges first using the Judge Management section above.")
+    else:
+        st.info("No submissions available.")
+
     st.markdown('<div class="section-header">Judge Review Completion</div>', unsafe_allow_html=True)
     judge_display = judge_activity.copy()
     if not judge_display.empty:
@@ -3270,6 +3460,13 @@ def render_judge_portal(judge_email: str) -> None:
     except Exception as exc:
         st.error(f"Could not load submissions from Databricks: {exc}")
         submissions = local_submissions()
+
+    allocated_submission_ids = load_judge_allocations(judge_email)
+    if allocated_submission_ids:
+        submissions = submissions[
+            submissions["submission_id"].astype(str).isin([str(sid) for sid in allocated_submission_ids])
+        ]
+        st.info(f"📋 You are assigned to {len(submissions)} project(s).")
 
     try:
         my_reviews = load_my_review_summary(judge_email)
