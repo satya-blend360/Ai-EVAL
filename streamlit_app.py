@@ -3499,7 +3499,8 @@ def render_judge_portal(judge_email: str) -> None:
         ]
         st.info(f"📋 You are assigned to {len(submissions)} project(s).")
     else:
-        st.sidebar.caption("ℹ️ No projects assigned. Admin must allocate projects to you.")
+        st.warning("❌ No projects assigned to you. Please contact the admin to assign projects.")
+        st.stop()
 
     try:
         my_reviews = load_my_review_summary(judge_email)
