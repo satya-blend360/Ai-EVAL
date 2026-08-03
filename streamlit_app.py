@@ -1828,12 +1828,28 @@ def build_judge_activity_table(scores: pd.DataFrame, total_submissions: int) -> 
     else:
         activity = login_summary.merge(score_summary, on="judge_email", how="outer")
 
+    # Include every registered judge, even with no logins or reviews yet.
+    try:
+        registered_judges = list(load_judge_credentials().keys())
+    except Exception:
+        registered_judges = []
+    existing_emails = (
+        set(activity["judge_email"].fillna("").astype(str).str.strip().str.lower())
+        if not activity.empty
+        else set()
+    )
+    missing_judges = [email for email in registered_judges if email not in existing_emails]
+    if missing_judges:
+        missing_df = pd.DataFrame([{"judge_email": email} for email in missing_judges])
+        activity = pd.concat([activity, missing_df], ignore_index=True) if not activity.empty else missing_df
+
     if activity.empty:
         return pd.DataFrame(
             columns=[
                 "Judge",
                 "Logged In",
                 "Login Count",
+                "Projects Assigned",
                 "Reviews Completed",
                 "Completion %",
                 "Total Score Awarded",
@@ -1849,9 +1865,26 @@ def build_judge_activity_table(scores: pd.DataFrame, total_submissions: int) -> 
     activity["reviews_completed"] = pd.to_numeric(activity.get("reviews_completed"), errors="coerce").fillna(0).astype(int)
     activity["total_score_awarded"] = pd.to_numeric(activity.get("total_score_awarded"), errors="coerce").fillna(0.0)
     activity["avg_score"] = pd.to_numeric(activity.get("avg_score"), errors="coerce")
-    activity["completion_pct"] = (
+    for column in ["first_login_at", "last_login_at", "last_review_at"]:
+        if column not in activity.columns:
+            activity[column] = ""
+        activity[column] = activity[column].fillna("")
+
+    # Completion is measured against each judge's assigned projects; if a judge
+    # has no assignments, fall back to the total number of submissions.
+    allocations_map = load_allocations_by_judge()
+    activity["projects_assigned"] = activity["judge_email"].map(
+        lambda email: len(allocations_map.get(str(email).strip().lower(), []))
+    )
+    fallback_pct = (
         activity["reviews_completed"] / total_submissions * 100.0 if total_submissions else 0.0
     )
+    activity["completion_pct"] = np.where(
+        activity["projects_assigned"] > 0,
+        activity["reviews_completed"] / activity["projects_assigned"].replace(0, np.nan) * 100.0,
+        fallback_pct,
+    )
+    activity["completion_pct"] = pd.to_numeric(activity["completion_pct"], errors="coerce").fillna(0.0).clip(upper=100.0)
     activity["logged_in"] = activity["login_count"] > 0
     activity = activity.sort_values(
         ["reviews_completed", "avg_score", "judge_email"],
@@ -1863,6 +1896,7 @@ def build_judge_activity_table(scores: pd.DataFrame, total_submissions: int) -> 
             "judge_email": "Judge",
             "logged_in": "Logged In",
             "login_count": "Login Count",
+            "projects_assigned": "Projects Assigned",
             "reviews_completed": "Reviews Completed",
             "completion_pct": "Completion %",
             "total_score_awarded": "Total Score Awarded",
@@ -1876,6 +1910,7 @@ def build_judge_activity_table(scores: pd.DataFrame, total_submissions: int) -> 
             "Judge",
             "Logged In",
             "Login Count",
+            "Projects Assigned",
             "Reviews Completed",
             "Completion %",
             "Total Score Awarded",
@@ -2284,6 +2319,7 @@ def save_judge_allocation(judge_email: str, submission_id: str) -> bool:
             },
         )
         _fetch_allocations_from_db.clear()
+        _fetch_allocations_map_from_db.clear()
         return True
     except Exception as e:
         error_msg = str(e).lower()
@@ -2323,6 +2359,35 @@ def load_judge_allocations(judge_email: str = "") -> List[str]:
         return []
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_allocations_map_from_db() -> Dict[str, List[str]]:
+    result = run_db_query(
+        f"SELECT judge_email, submission_id FROM {DB_PREFIX}.judge_allocations", fetch=True
+    )
+    mapping: Dict[str, List[str]] = {}
+    if result is not None and not result.empty:
+        for _, row in result.iterrows():
+            email = str(row["judge_email"]).strip().lower()
+            mapping.setdefault(email, []).append(str(row["submission_id"]))
+    return mapping
+
+
+def load_allocations_by_judge() -> Dict[str, List[str]]:
+    """Map of judge email -> list of allocated submission IDs."""
+    if not db_configured():
+        local = st.session_state.get("local_judge_allocations", [])
+        mapping: Dict[str, List[str]] = {}
+        for alloc in local:
+            email = str(alloc.get("judge_email", "")).strip().lower()
+            mapping.setdefault(email, []).append(str(alloc.get("submission_id")))
+        return mapping
+
+    try:
+        return _fetch_allocations_map_from_db()
+    except Exception:
+        return {}
+
+
 def delete_judge_allocation(judge_email: str, submission_id: str) -> bool:
     """Remove a judge-project allocation."""
     judge_email_lower = judge_email.strip().lower()
@@ -2350,6 +2415,7 @@ def delete_judge_allocation(judge_email: str, submission_id: str) -> bool:
             },
         )
         _fetch_allocations_from_db.clear()
+        _fetch_allocations_map_from_db.clear()
         return True
     except Exception as e:
         st.error(f"❌ Error removing allocation: {str(e)}")
@@ -3089,11 +3155,23 @@ def render_admin_dashboard(judge_email: str) -> None:
         if not judge_activity.empty and "Reviews Completed" in judge_activity.columns
         else 0
     )
-    judges_complete = (
-        int((judge_activity["Reviews Completed"] >= total_submissions).sum())
-        if total_submissions and not judge_activity.empty
-        else 0
-    )
+    if (
+        not judge_activity.empty
+        and "Projects Assigned" in judge_activity.columns
+        and judge_activity["Projects Assigned"].sum() > 0
+    ):
+        judges_complete = int(
+            (
+                (judge_activity["Projects Assigned"] > 0)
+                & (judge_activity["Reviews Completed"] >= judge_activity["Projects Assigned"])
+            ).sum()
+        )
+    else:
+        judges_complete = (
+            int((judge_activity["Reviews Completed"] >= total_submissions).sum())
+            if total_submissions and not judge_activity.empty
+            else 0
+        )
     scored_projects = (
         int((project_scores["Reviews Completed"] > 0).sum())
         if not project_scores.empty and "Reviews Completed" in project_scores.columns
