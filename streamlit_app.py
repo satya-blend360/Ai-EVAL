@@ -711,6 +711,24 @@ def render_warehouse_wait_notice() -> None:
     st.stop()
 
 
+@st.cache_resource(show_spinner=False)
+def _db_connection_holder() -> Dict[str, Any]:
+    """Shared holder for one reusable Databricks connection (all sessions)."""
+    import threading
+
+    return {"conn": None, "role": "", "lock": threading.Lock()}
+
+
+def _execute_on_connection(connection, query: str, parameters: Optional[Dict[str, Any]], fetch: bool):
+    with connection.cursor() as cursor:
+        cursor.execute(query, parameters=parameters or {})
+        if not fetch:
+            return None
+        rows = cursor.fetchall()
+        columns = [column[0] for column in cursor.description]
+        return pd.DataFrame(rows, columns=columns)
+
+
 def run_db_query(query: str, parameters: Optional[Dict[str, Any]] = None, fetch: bool = False):
     if not db_configured():
         raise RuntimeError("Databricks secrets are not configured.")
@@ -719,30 +737,46 @@ def run_db_query(query: str, parameters: Optional[Dict[str, Any]] = None, fetch:
     except ImportError as exc:
         raise RuntimeError("databricks-sql-connector is not installed.") from exc
 
-    errors = []
-    for target in databricks_warehouse_targets():
-        try:
-            with sql.connect(
-                server_hostname=get_secret("DATABRICKS_SERVER_HOSTNAME"),
-                http_path=target["http_path"],
-                access_token=get_secret("DATABRICKS_TOKEN"),
-                socket_timeout=1,
-            ) as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(query, parameters=parameters or {})
-                    st.session_state["active_warehouse_role"] = (
-                        f"{target['role']} - {target['name']}"
-                    )
-                    if not fetch:
-                        return None
-                    rows = cursor.fetchall()
-                    columns = [column[0] for column in cursor.description]
-                    return pd.DataFrame(rows, columns=columns)
-        except Exception as exc:
-            errors.append(f"{target['role']} {target['name']}: {exc}")
-            continue
+    holder = _db_connection_holder()
+    with holder["lock"]:
+        # Fast path: reuse the already-open connection (skips the 1-3s handshake).
+        if holder["conn"] is not None:
+            try:
+                result = _execute_on_connection(holder["conn"], query, parameters, fetch)
+                try:
+                    st.session_state["active_warehouse_role"] = holder["role"]
+                except Exception:
+                    pass
+                return result
+            except Exception:
+                try:
+                    holder["conn"].close()
+                except Exception:
+                    pass
+                holder["conn"] = None
 
-    raise RuntimeError("All configured Databricks warehouses failed. " + " | ".join(errors))
+        errors = []
+        for target in databricks_warehouse_targets():
+            try:
+                connection = sql.connect(
+                    server_hostname=get_secret("DATABRICKS_SERVER_HOSTNAME"),
+                    http_path=target["http_path"],
+                    access_token=get_secret("DATABRICKS_TOKEN"),
+                    socket_timeout=15,
+                )
+                result = _execute_on_connection(connection, query, parameters, fetch)
+                holder["conn"] = connection
+                holder["role"] = f"{target['role']} - {target['name']}"
+                try:
+                    st.session_state["active_warehouse_role"] = holder["role"]
+                except Exception:
+                    pass
+                return result
+            except Exception as exc:
+                errors.append(f"{target['role']} {target['name']}: {exc}")
+                continue
+
+        raise RuntimeError("All configured Databricks warehouses failed. " + " | ".join(errors))
 
 
 def normalize_text(value: Any) -> str:
@@ -1374,7 +1408,7 @@ def local_submissions() -> pd.DataFrame:
     return dedupe_submissions_by_team(pd.DataFrame(rows))
 
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=30)
 def load_submissions() -> pd.DataFrame:
     if not db_configured():
         return local_submissions()
@@ -1682,7 +1716,7 @@ def empty_score_details() -> pd.DataFrame:
     )
 
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=30)
 def load_all_judge_scores() -> pd.DataFrame:
     if not db_configured():
         scores = pd.DataFrame(list(st.session_state.setdefault("local_judge_scores", {}).values()))
@@ -2249,6 +2283,7 @@ def save_judge_allocation(judge_email: str, submission_id: str) -> bool:
                 "submission_id": submission_id_str,
             },
         )
+        _fetch_allocations_from_db.clear()
         return True
     except Exception as e:
         error_msg = str(e).lower()
@@ -2256,6 +2291,22 @@ def save_judge_allocation(judge_email: str, submission_id: str) -> bool:
             return True
         st.error(f"❌ Database Error: {str(e)}")
         return False
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_allocations_from_db(judge_email_lower: str) -> List[str]:
+    """Cached read of judge allocations (cleared when admin assigns/removes)."""
+    query = f"SELECT submission_id FROM {DB_PREFIX}.judge_allocations"
+    params = {}
+    if judge_email_lower:
+        query += " WHERE lower(judge_email) = lower(:judge_email)"
+        params["judge_email"] = judge_email_lower
+    query += " ORDER BY created_at DESC"
+
+    result = run_db_query(query, params, fetch=True)
+    if result is not None and not result.empty:
+        return [str(sid) for sid in result["submission_id"].tolist()]
+    return []
 
 
 def load_judge_allocations(judge_email: str = "") -> List[str]:
@@ -2267,17 +2318,7 @@ def load_judge_allocations(judge_email: str = "") -> List[str]:
         return [a["submission_id"] for a in local]
 
     try:
-        query = f"SELECT submission_id FROM {DB_PREFIX}.judge_allocations"
-        params = {}
-        if judge_email:
-            query += " WHERE lower(judge_email) = lower(:judge_email)"
-            params["judge_email"] = judge_email.lower()
-        query += " ORDER BY created_at DESC"
-
-        result = run_db_query(query, params, fetch=True)
-        if result is not None and not result.empty:
-            return [str(sid) for sid in result["submission_id"].tolist()]
-        return []
+        return _fetch_allocations_from_db(judge_email.strip().lower())
     except Exception:
         return []
 
@@ -2308,6 +2349,7 @@ def delete_judge_allocation(judge_email: str, submission_id: str) -> bool:
                 "submission_id": submission_id_str,
             },
         )
+        _fetch_allocations_from_db.clear()
         return True
     except Exception as e:
         st.error(f"❌ Error removing allocation: {str(e)}")
