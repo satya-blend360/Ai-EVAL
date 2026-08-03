@@ -270,10 +270,7 @@ def load_judge_credentials() -> Dict[str, str]:
         return credentials
 
     try:
-        ensure_judges_table()
-        result = run_db_query(
-            f"SELECT judge_email, password FROM {DB_PREFIX}.judges", fetch=True
-        )
+        result = _fetch_judges_df()
         if result is not None and not result.empty:
             for _, row in result.iterrows():
                 email = str(row["judge_email"]).strip().lower()
@@ -284,6 +281,14 @@ def load_judge_credentials() -> Dict[str, str]:
         pass
 
     return credentials
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_judges_df() -> Optional[pd.DataFrame]:
+    """Cached read of the judges table (cleared when admin adds/removes a judge)."""
+    return run_db_query(
+        f"SELECT judge_email, password FROM {DB_PREFIX}.judges", fetch=True
+    )
 
 
 def load_admin_credentials() -> Dict[str, str]:
@@ -1597,20 +1602,28 @@ def ensure_app_settings_table() -> None:
     st.session_state["app_settings_table_ready"] = True
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_app_setting_from_db(setting_key: str) -> Optional[str]:
+    """Cached read of one app setting (cleared when the admin saves a setting)."""
+    result = run_db_query(
+        f"SELECT setting_value FROM {DB_PREFIX}.app_settings WHERE setting_key = :setting_key",
+        {"setting_key": setting_key},
+        fetch=True,
+    )
+    if result is not None and not result.empty:
+        return str(result.iloc[0]["setting_value"])
+    return None
+
+
 def get_app_setting(setting_key: str, default: str = "") -> str:
     """Read an app-wide setting from Databricks (falls back to session state)."""
     if not db_configured():
         return str(st.session_state.get("local_app_settings", {}).get(setting_key, default))
 
     try:
-        ensure_app_settings_table()
-        result = run_db_query(
-            f"SELECT setting_value FROM {DB_PREFIX}.app_settings WHERE setting_key = :setting_key",
-            {"setting_key": setting_key},
-            fetch=True,
-        )
-        if result is not None and not result.empty:
-            return str(result.iloc[0]["setting_value"])
+        value = _fetch_app_setting_from_db(setting_key)
+        if value is not None:
+            return value
     except Exception:
         pass
     return default
@@ -1638,6 +1651,7 @@ def save_app_setting(setting_key: str, setting_value: str) -> bool:
                 "setting_value": setting_value,
             },
         )
+        _fetch_app_setting_from_db.clear()
         return True
     except Exception as e:
         st.error(f"❌ Error saving setting: {str(e)}")
@@ -2163,6 +2177,7 @@ def save_judge_credentials(judge_email: str, judge_password: str) -> bool:
                 "password": judge_password,
             },
         )
+        _fetch_judges_df.clear()
         return True
     except Exception as e:
         error_msg = str(e).lower()
@@ -2175,6 +2190,7 @@ def save_judge_credentials(judge_email: str, judge_password: str) -> bool:
                         "password": judge_password,
                     },
                 )
+                _fetch_judges_df.clear()
                 return True
             except Exception:
                 return False
@@ -2197,6 +2213,7 @@ def delete_judge_credentials(judge_email: str) -> bool:
             f"DELETE FROM {DB_PREFIX}.judges WHERE lower(judge_email) = lower(:email)",
             {"email": judge_email_lower},
         )
+        _fetch_judges_df.clear()
         return True
     except Exception:
         return False
@@ -2250,7 +2267,6 @@ def load_judge_allocations(judge_email: str = "") -> List[str]:
         return [a["submission_id"] for a in local]
 
     try:
-        ensure_judge_allocations_table()
         query = f"SELECT submission_id FROM {DB_PREFIX}.judge_allocations"
         params = {}
         if judge_email:
@@ -3994,7 +4010,8 @@ if not st.session_state.get("judge_login_recorded"):
 
         thread = threading.Thread(target=record_login_with_timeout, daemon=True)
         thread.start()
-        thread.join(timeout=5)
+        # Fire-and-forget: don't block the login on Databricks login tracking.
+        thread.join(timeout=0.5)
         sql_server_working = not st.session_state.get("login_tracking_error")
         st.session_state.pop("login_tracking_error", None)
     except Exception as exc:
