@@ -512,7 +512,7 @@ def databricks_warehouse_targets() -> List[Dict[str, str]]:
     targets = [
         {
             "role": "Primary",
-            "name": "Starter Warehouse",
+            "name": "forPIH_Hackathon",
             "warehouse_id": databricks_warehouse_id(),
             "http_path": get_secret("DATABRICKS_HTTP_PATH").strip(),
         }
@@ -521,7 +521,7 @@ def databricks_warehouse_targets() -> List[Dict[str, str]]:
         targets.append(
             {
                 "role": "Backup",
-                "name": "forPIH_Hackathon",
+                "name": "Starter Warehouse",
                 "warehouse_id": backup_id,
                 "http_path": backup_path,
             }
