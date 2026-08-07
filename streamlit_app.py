@@ -3206,6 +3206,51 @@ def render_admin_dashboard(judge_email: str) -> None:
                         f"{int(row['Reviews Completed'])} review(s)"
                     )
 
+    st.markdown('<div class="section-header">Final Rankings — 60% Judges + 40% AI</div>', unsafe_allow_html=True)
+    st.caption(
+        "Final Score = 60% × average judge score (scaled to 100) + 40% × AI semantic correctness score. "
+        "Missing scores count as 0 — run the batch AI computation and ensure judges finish reviews for accurate rankings."
+    )
+    if project_scores.empty:
+        st.caption("No submissions available yet.")
+    else:
+        ranking = project_scores[["Member / Team", "Submitter", "Avg Score /20", "Reviews Completed"]].copy()
+        ranking["Judge Score /100"] = (
+            pd.to_numeric(ranking["Avg Score /20"], errors="coerce") / PIH_SCORE_MAX * 100.0
+        ).round(1)
+
+        if not submissions.empty and "project_name" in submissions.columns and "ai_score" in submissions.columns:
+            ai_by_project = submissions.drop_duplicates("project_name").set_index("project_name")["ai_score"]
+            ranking["AI Score /100"] = pd.to_numeric(
+                ranking["Member / Team"].map(ai_by_project), errors="coerce"
+            ).round(1)
+        else:
+            ranking["AI Score /100"] = np.nan
+
+        ranking["Final Score /100"] = (
+            0.6 * ranking["Judge Score /100"].fillna(0.0) + 0.4 * ranking["AI Score /100"].fillna(0.0)
+        ).round(1)
+        ranking = ranking.sort_values(
+            ["Final Score /100", "Judge Score /100", "Member / Team"],
+            ascending=[False, False, True],
+        ).reset_index(drop=True)
+        ranking.insert(0, "Rank", range(1, len(ranking) + 1))
+        st.dataframe(
+            ranking[
+                [
+                    "Rank",
+                    "Member / Team",
+                    "Submitter",
+                    "Judge Score /100",
+                    "AI Score /100",
+                    "Final Score /100",
+                    "Reviews Completed",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
     st.markdown('<div class="section-header">Member / Team Scoreboard</div>', unsafe_allow_html=True)
     project_display = project_scores.copy()
     if not project_display.empty:
